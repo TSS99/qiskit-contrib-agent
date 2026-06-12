@@ -36,6 +36,7 @@ $MineFile     = Join-Path $AgentDir "mine-prompt.md"
 $LessonsFile  = Join-Path $AgentDir "lessons.md"
 $PatternsFile = Join-Path $AgentDir "merged-patterns.md"
 $LedgerFile   = Join-Path $AgentDir "evaluated-issues.md"
+$AgentPrsFile = Join-Path $AgentDir "agent-prs.md"
 $RunsDir      = Join-Path $AgentDir "runs"
 $Timestamp    = Get-Date -Format "yyyyMMdd-HHmmss"
 $RunDir       = Join-Path $RunsDir $Timestamp
@@ -105,31 +106,47 @@ $ledger
     return $OpenPrBlock + $patternsBlock + $lessonsBlock + $ledgerBlock + $base
 }
 
-# --- Open-PR cap guard -------------------------------------------------------
-
+# --- One-at-a-time cap guard -------------------------------------------------
+# Policy: pre-existing PRs (the legacy 5) are left alone and do NOT count. The
+# agent only counts PRs IT opened (tracked in agent-prs.md). If any of those is
+# still open, do not open another - one agent PR at a time. This honors the
+# anti-volume feedback (jakelishman batch-closed 8 PRs) without blocking on old
+# work the user has chosen to leave as-is.
 $OpenPrBlock = ""
 $Capped = $false
 try {
-    $openPrsRaw = gh search prs --author "TSS99" --state open --json url,title 2>$null | ConvertFrom-Json
-    $openPrs = @($openPrsRaw)
-    if ($openPrs.Count -ge 1) {
-        $Capped = $true
-        $list = ($openPrs | ForEach-Object { "- $($_.title) ($($_.url))" }) -join "`n"
-        $OpenPrBlock = @"
-## HARD CONSTRAINT - OPEN PR CAP REACHED
+    if (Test-Path $AgentPrsFile) {
+        $trackedUrls = @(
+            Get-Content $AgentPrsFile -Encoding UTF8 |
+            ForEach-Object {
+                $m = [regex]::Match($_, "https?://github\.com/[^\s)]+/pull/\d+")
+                if ($m.Success) { $m.Value }
+            } | Select-Object -Unique
+        )
+        $stillOpen = @()
+        foreach ($u in $trackedUrls) {
+            $st = (gh pr view $u --json state 2>$null | ConvertFrom-Json).state
+            if ($st -eq "OPEN") { $stillOpen += $u }
+        }
+        if ($stillOpen.Count -ge 1) {
+            $Capped = $true
+            $list = ($stillOpen | ForEach-Object { "- $_" }) -join "`n"
+            $OpenPrBlock = @"
+## HARD CONSTRAINT - ONE-AT-A-TIME CAP
 
-You currently have $($openPrs.Count) open PR(s):
+The agent already has an open PR it created:
 $list
 
-The standing rule is a maximum of ONE open PR at a time. You MUST NOT open a new
-PR this run. End with NO SUBMISSION RECOMMENDED, citing the open-PR cap.
+Open at most ONE agent-created PR at a time. Do not open another until that one
+merges or closes. End with NO SUBMISSION RECOMMENDED, citing the one-at-a-time cap.
 
 ---
 
 "@
+        }
     }
 } catch {
-    Write-Host "Warning: could not query open PRs ($_). Proceeding without guard." -ForegroundColor DarkYellow
+    Write-Host "Warning: could not check agent PR status ($_). Proceeding without guard." -ForegroundColor DarkYellow
 }
 
 # --- Dry run -----------------------------------------------------------------
@@ -277,7 +294,17 @@ if ($Capped) {
         $OpusOutput | Out-File -FilePath (Join-Path $RunDir "opus-verify.txt") -Encoding UTF8
 
         if ($OpusOutput -match "PR SUBMITTED") {
-            Log "Stage 2: Opus submitted the PR." "Green"
+            $prUrl = ([regex]::Match($OpusOutput, "https?://github\.com/[^\s)]+/pull/\d+")).Value
+            if ($prUrl) {
+                $today = Get-Date -Format "yyyy-MM-dd"
+                if (-not (Test-Path $AgentPrsFile)) {
+                    "# Agent-created PRs (one-at-a-time cap counts these)`n" | Out-File -FilePath $AgentPrsFile -Encoding UTF8
+                }
+                "- $today | $prUrl" | Out-File -FilePath $AgentPrsFile -Append -Encoding UTF8
+                Log "Stage 2: Opus submitted the PR. Tracked: $prUrl" "Green"
+            } else {
+                Log "Stage 2: Opus reported PR SUBMITTED but no URL parsed - one-at-a-time cap may not engage. Check opus-verify.txt." "Red"
+            }
         } elseif ($OpusOutput -match "NO SUBMISSION RECOMMENDED") {
             Log "Stage 2: Opus blocked submission." "Yellow"
         } else {
