@@ -1,0 +1,10 @@
+﻿- [FEEDBACK]: Avoid submitting multiple PRs concurrently — jakelishman batch-closed 8 PRs citing "too much volume" of LLM PRs; open one or two at a time and drive each to completion before opening new ones.
+- [FEEDBACK]: Keep PR descriptions brief — alexanderivrii objected to "Validation", "Problem", and "Tests" subsections as unnecessary given CI; use: one-sentence summary, short details, LLM attribution — nothing more.
+- [FEEDBACK]: Validate the reproducer actually exhibits the bug before submitting — ShellyGarion asked for a reproducer that "actually shows the incorrect behaviour" and alexanderivrii found one invalid mid-review; confirm failure on unpatched main before opening any bug-fix PR.
+- [FEEDBACK]: Fix the correct layer, not the symptom — jakelishman rejected a QASM3 exporter fix as wrong because "the root fault is not in the exporter but in the importer"; trace the bug to its origin before writing code.
+- [FEEDBACK]: Ensure the fix does not regress valid adjacent behavior — jakelishman rejected a Sabre disjoint-layout fix as "overly restrictive" because it broke the valid idle-qubit case; add tests for valid edge-cases that should still pass alongside the regression test.
+- [FEEDBACK]: Adopt the technically superior approach when maintainers suggest it — PR 16309 merged after accepting the subtract-overcount strategy proposed by reviewers; do not defend the initial implementation when reviewers propose a measurably better alternative.
+- [SELECTION]: Pick issues where a minimal, self-contained fix is possible in one layer; avoid issues requiring coordinated changes across importer and exporter or multiple subsystems.
+- [TECHNICAL]: Reproduce the bug on unpatched main in a minimal script before writing any fix code; if the script does not fail, abandon the issue.
+- [TECHNICAL]: After writing the fix, run the full relevant test suite locally and add at least one regression test and one test for a valid adjacent case that must still pass.
+- [PRSTYLE]: PR body structure: one-sentence summary, two to four lines of detail, one-line LLM attribution — no subsection headers, no CI narrative, no validation checklists.
