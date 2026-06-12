@@ -383,7 +383,7 @@ Do not open the PR unless all are true:
 - diff has no unrelated churn
 - PR body is short
 - branch/title do not mention Codex or AI
-- AI disclosure follows repository policy but does not dominate the PR
+- AI disclosure is included only if repo policy requires it or a maintainer asks; never added by default; never denied if asked directly
 - I can explain every changed line
 
 If all are true, open one PR.
@@ -433,9 +433,12 @@ Two to four sentences maximum. Explain only what reviewers need to know.
 
 Optional. Include only real limitations or relevant context.
 
-## AI disclosure
+## AI disclosure (conditional)
 
-Follow repository policy exactly. Keep it short and honest.
+Do NOT add an AI disclosure section by default. Include disclosure ONLY if the
+repository's contribution policy explicitly requires it, or a maintainer asks.
+When required, keep it to one short honest line and follow the repo's wording.
+Otherwise omit this section entirely. Never deny AI assistance if asked directly.
 
 Do not include:
 - long root-cause essay
