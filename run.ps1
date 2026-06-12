@@ -151,6 +151,51 @@ if (Test-Path $MainOutputFile) {
 
 $MainOutput | Out-File -FilePath (Join-Path $RunDir "summary.md") -Encoding UTF8
 
+# --- Stage 2: Opus 4.8 verification + submission -----------------------------
+# Stage 1 (Codex) only prepares a local branch + commit. Opus verifies the
+# change, fixes what it must, and only then pushes to the fork and opens the PR.
+
+$VerifyPromptFile = Join-Path $AgentDir "verify-prompt.md"
+$OpusOutput = ""
+
+$Stage1Submits = ($MainExit -eq 0) -and ($MainOutput -notmatch "NO SUBMISSION RECOMMENDED")
+
+if (-not $Stage1Submits) {
+    Log "Stage 1 produced no submittable change - skipping Opus verification." "Gray"
+} elseif (-not (Test-Path $VerifyPromptFile)) {
+    Log "verify-prompt.md missing - skipping Opus verification." "Red"
+} else {
+    Log "Stage 2: Opus 4.8 verifying the prepared change..." "Cyan"
+    $VerifyTemplate = Get-Content $VerifyPromptFile -Raw -Encoding UTF8
+    $VerifyPrompt = $VerifyTemplate.Replace("{{CODEX_HANDOFF}}", $MainOutput)
+
+    Push-Location $RepoPath
+    try {
+        $OpusOutput = $VerifyPrompt | claude -p `
+            --model claude-opus-4-8 `
+            --permission-mode bypassPermissions `
+            --add-dir $RepoPath 2>&1 | Out-String
+    } finally {
+        Pop-Location
+    }
+
+    $OpusOutput | Out-File -FilePath (Join-Path $RunDir "opus-verify.txt") -Encoding UTF8
+
+    if ($OpusOutput -match "PR SUBMITTED") {
+        Log "Stage 2: Opus submitted the PR." "Green"
+    } elseif ($OpusOutput -match "NO SUBMISSION RECOMMENDED") {
+        Log "Stage 2: Opus blocked submission." "Yellow"
+    } else {
+        Log "Stage 2: Opus output unclear - review opus-verify.txt." "DarkYellow"
+    }
+}
+
+# Combined transcript for self-evaluation (both stages learn from each run).
+$EvalTranscript = $MainOutput
+if ($OpusOutput) {
+    $EvalTranscript += "`n`n=== STAGE 2 (OPUS 4.8 VERIFICATION) ===`n$OpusOutput"
+}
+
 # --- Self-evaluation: extract lessons ----------------------------------------
 
 Log "Running self-evaluation to extract lessons..." "Yellow"
@@ -162,12 +207,13 @@ if (Test-Path $LessonsFile) {
 }
 
 $SelfEvalPrompt = @"
-You are reviewing your own performance as a Qiskit open-source contribution agent.
+You are reviewing the performance of a two-stage Qiskit contribution pipeline
+(Stage 1 = Codex prepares the change; Stage 2 = Opus verifies, fixes, submits).
 
-Below is the final output from your most recent run:
+Below is the combined output from the most recent run:
 
 ---
-$MainOutput
+$EvalTranscript
 ---
 
 Your task: extract concrete, actionable lessons from this run.
