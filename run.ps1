@@ -144,6 +144,12 @@ if ($DryRun) {
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 
+# From here on we drive native exes (codex, claude, git, gh). In PS 5.1 a native
+# command writing to stderr becomes a fatal NativeCommandError under "Stop" even
+# on exit code 0 (e.g. `git push` prints progress to stderr). We gate on
+# $LASTEXITCODE explicitly, so downgrade to Continue to avoid false failures.
+$ErrorActionPreference = "Continue"
+
 function Log([string]$Msg, [string]$Color = "White") {
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Msg" -ForegroundColor $Color
 }
