@@ -169,11 +169,25 @@ if (-not $Stage1Submits) {
     $VerifyTemplate = Get-Content $VerifyPromptFile -Raw -Encoding UTF8
     $VerifyPrompt = $VerifyTemplate.Replace("{{CODEX_HANDOFF}}", $MainOutput)
 
+    # Scoped tool allowlist (fail-safe: with --permission-mode default, any tool
+    # not on this list is auto-denied in headless mode rather than run). Covers
+    # git/gh, the Qiskit dev/test toolchain, and file inspection/editing.
+    # Add a line here if a future run blocks on a legitimately-needed command.
+    $AllowedTools = @(
+        "Bash(git:*)", "Bash(gh:*)",
+        "Bash(python:*)", "Bash(python3:*)", "Bash(py:*)",
+        "Bash(pytest:*)", "Bash(stestr:*)", "Bash(tox:*)", "Bash(nox:*)",
+        "Bash(black:*)", "Bash(ruff:*)", "Bash(pylint:*)", "Bash(mypy:*)",
+        "Bash(pip:*)", "Bash(reno:*)",
+        "Read", "Edit", "Write", "Grep", "Glob"
+    ) -join " "
+
     Push-Location $RepoPath
     try {
         $OpusOutput = $VerifyPrompt | claude -p `
             --model claude-opus-4-8 `
-            --permission-mode bypassPermissions `
+            --permission-mode default `
+            --allowedTools $AllowedTools `
             --add-dir $RepoPath 2>&1 | Out-String
     } finally {
         Pop-Location
