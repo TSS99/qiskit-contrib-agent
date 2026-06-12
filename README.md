@@ -9,23 +9,38 @@ Codex (gpt-5.5, xhigh reasoning). Backs up every run + learned lessons here.
 |------|---------|
 | `prompt.md` | Stage 1 workflow (Codex): careful contributor, quality gates, prepare-only. |
 | `verify-prompt.md` | Stage 2 workflow (Opus 4.8): verify, fix, push, open PR. |
-| `run.ps1` | Runner. Guard → Codex prepare → Opus verify+submit → self-eval → push. |
-| `lessons.md` | Accumulated lessons. Prepended to the prompt each run. |
-| `runs/<timestamp>/` | Per-run artifacts: prompt used, summary, opus-verify, new lessons. |
+| `feedback-prompt.md` | Stage 0 (Sonnet): mine real maintainer reactions to TSS99 PRs. |
+| `mine-prompt.md` | Pattern-mining (Sonnet): refresh `merged-patterns.md` from upstream. |
+| `merged-patterns.md` | What actually gets merged, grounded in real PRs. Injected into Stage 1. |
+| `lessons.md` | Curated, tagged, capped lessons. Injected into Stage 1. |
+| `evaluated-issues.md` | Ledger of issues already evaluated, to skip re-work. |
+| `run.ps1` | Orchestrator for all stages below. |
+| `runs/<timestamp>/` | Per-run artifacts: feedback, mining, prompt-used, summary, opus-verify. |
 
-## How it works
+## How it works (per run)
 
-1. **Open-PR guard** — if a PR by `TSS99` is already open anywhere on GitHub,
-   the agent is forced into evaluation-only mode (standing ≤1 open PR cap).
-2. **Stage 1 — Codex prepares** — Codex (gpt-5.5, xhigh) executes `prompt.md`
-   against the local Qiskit repo. It makes one local commit on a branch but
-   does NOT push or open a PR; it hands off a structured report.
-3. **Stage 2 — Opus verifies + submits** — if Stage 1 prepared a change, Opus
-   4.8 independently verifies correctness, fixes what it must, re-runs tests,
-   and only then pushes to the fork and opens the PR. If unfixable, it blocks.
-4. **Self-improvement** — a Codex pass extracts concrete lessons from both
-   stages and appends them to `lessons.md`, so the next run learns.
-5. **Backup** — all artifacts are committed and pushed here.
+0. **Feedback ingest** (Sonnet + gh) — reads TSS99's merged/closed/open PRs and
+   the maintainer comments on them, turning real reactions into `[FEEDBACK]`
+   lessons. This is the primary, fastest learning signal.
+1. **Open-PR cap guard** — if a PR by `TSS99` is open anywhere, the expensive
+   contribution stages (mining, Stage 1, Stage 2) are **skipped entirely**;
+   only feedback + curation + backup run. Enforces the ≤1-open-PR cap cheaply.
+2. **Pattern mining** (Sonnet + gh, weekly) — studies recently merged upstream
+   PRs and rewrites `merged-patterns.md` so issue selection follows what works.
+3. **Stage 1 — Codex prepares** (gpt-5.5, xhigh) — picks a candidate guided by
+   the patterns + lessons + ledger, makes one local commit on a branch, does
+   NOT push or open a PR; hands off a structured report.
+4. **Stage 2 — Opus verifies + submits** (Opus 4.8, scoped tools) — independently
+   verifies correctness, fixes what it must, re-runs tests, then pushes to the
+   fork and opens the PR. Blocks if unfixable.
+5. **Ledger update** (Sonnet) — records which issues were evaluated and the
+   verdict, so future runs skip known rejects.
+6. **Lesson curator** (Sonnet) — merges feedback + run lessons into `lessons.md`,
+   deduped, tagged (FEEDBACK/SELECTION/TECHNICAL/PRSTYLE), capped at 30.
+7. **Backup** — all artifacts committed and pushed here.
+
+Models: Sonnet for the cheap analytical stages (0, 2, 5, 6), Codex gpt-5.5 xhigh
+for preparation (3), Opus 4.8 for verification + submission (4).
 
 ## Run manually
 

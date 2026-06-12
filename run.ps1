@@ -1,24 +1,24 @@
 <#
 .SYNOPSIS
-    Qiskit contribution agent - gpt-5.5 xhigh reasoning, self-improving.
+    Qiskit contribution agent - two-stage, feedback-driven, self-improving.
 
 .DESCRIPTION
-    Runs the contribution workflow via Codex (gpt-5.5, xhigh reasoning).
-    After each run, a second Codex call extracts lessons and appends them
-    to lessons.md. The next run prepends those lessons to the prompt so
-    the agent learns from past mistakes. Artifacts are pushed to a private
-    GitHub backup repo.
+    Pipeline per run:
+      0. Feedback ingest (sonnet + gh)  - learn from real maintainer reactions.
+      -  Open-PR cap guard               - if >=1 open PR, skip the expensive
+                                           contribution stages entirely.
+      1. Pattern mining (sonnet + gh)    - refresh merged-patterns.md weekly.
+      2. Stage 1 Codex prepare (xhigh)   - local branch + commit only.
+      3. Stage 2 Opus verify + submit    - independent check, then push + PR.
+      4. Ledger update (sonnet)          - record evaluated issues to skip later.
+      5. Lesson curator (sonnet)         - merge + dedup + cap lessons.md.
+      6. Backup push                     - commit artifacts to private repo.
 
 .PARAMETER RepoPath
     Path to local Qiskit repo. Defaults to D:\CDAC Projects\Qiskit_Advocate.
 
 .PARAMETER DryRun
-    Print the full assembled prompt without running anything.
-
-.EXAMPLE
-    .\run.ps1
-    .\run.ps1 -RepoPath "D:\CDAC Projects\some-other-repo"
-    .\run.ps1 -DryRun
+    Print the assembled Stage 1 prompt and exit. No model calls, no pushes.
 #>
 param(
     [string]$RepoPath = "D:\CDAC Projects\Qiskit_Advocate",
@@ -28,56 +28,92 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$AgentDir    = $PSScriptRoot
-$PromptFile  = Join-Path $AgentDir "prompt.md"
-$LessonsFile = Join-Path $AgentDir "lessons.md"
-$RunsDir     = Join-Path $AgentDir "runs"
-$Timestamp   = Get-Date -Format "yyyyMMdd-HHmmss"
-$RunDir      = Join-Path $RunsDir $Timestamp
+$AgentDir     = $PSScriptRoot
+$PromptFile   = Join-Path $AgentDir "prompt.md"
+$VerifyFile   = Join-Path $AgentDir "verify-prompt.md"
+$FeedbackFile = Join-Path $AgentDir "feedback-prompt.md"
+$MineFile     = Join-Path $AgentDir "mine-prompt.md"
+$LessonsFile  = Join-Path $AgentDir "lessons.md"
+$PatternsFile = Join-Path $AgentDir "merged-patterns.md"
+$LedgerFile   = Join-Path $AgentDir "evaluated-issues.md"
+$RunsDir      = Join-Path $AgentDir "runs"
+$Timestamp    = Get-Date -Format "yyyyMMdd-HHmmss"
+$RunDir       = Join-Path $RunsDir $Timestamp
+
+$CodexModel = "gpt-5.5"
+$CheapModel = "claude-sonnet-4-6"
+$OpusModel  = "claude-opus-4-8"
+$MineMaxAgeDays = 7
 
 # --- Validate ----------------------------------------------------------------
 
-if (-not (Test-Path $PromptFile)) {
-    Write-Error "prompt.md not found at $PromptFile"
-    exit 1
+if (-not (Test-Path $PromptFile)) { Write-Error "prompt.md not found at $PromptFile"; exit 1 }
+if (-not (Test-Path $RepoPath))   { Write-Error "Repo path does not exist: $RepoPath"; exit 1 }
+
+function Get-FileOrDefault([string]$Path, [string]$Default) {
+    if (Test-Path $Path) {
+        $c = (Get-Content $Path -Raw -Encoding UTF8).Trim()
+        if ($c) { return $c }
+    }
+    return $Default
 }
-if (-not (Test-Path $RepoPath)) {
-    Write-Error "Repo path does not exist: $RepoPath"
-    exit 1
-}
 
-# --- Assemble prompt ---------------------------------------------------------
+# --- Assemble Stage 1 prompt -------------------------------------------------
 
-$BasePrompt = Get-Content $PromptFile -Raw -Encoding UTF8
+function Build-Stage1Prompt([string]$OpenPrBlock) {
+    $base     = Get-Content $PromptFile -Raw -Encoding UTF8
+    $patterns = Get-FileOrDefault $PatternsFile "(no mined patterns yet)"
+    $lessons  = Get-FileOrDefault $LessonsFile  ""
+    $ledger   = Get-FileOrDefault $LedgerFile   ""
 
-$LessonsBlock = ""
-if (Test-Path $LessonsFile) {
-    $LessonsContent = (Get-Content $LessonsFile -Raw -Encoding UTF8).Trim()
-    if ($LessonsContent) {
-        $LessonsBlock = @"
+    $patternsBlock = @"
+## WHAT ACTUALLY GETS MERGED - FOLLOW THIS
+
+Grounded in real merged/closed PRs. This is the proven pattern; do not run blind
+trial-and-error against maintainers. Bias issue selection toward what merges.
+
+$patterns
+
+---
+
+"@
+
+    $lessonsBlock = ""
+    if ($lessons) {
+        $lessonsBlock = @"
 ## LEARNED LESSONS - APPLY BEFORE ANYTHING ELSE
 
-These lessons were extracted from past runs where mistakes were made.
-Read every item. Do not repeat these mistakes.
-
-$LessonsContent
+$lessons
 
 ---
 
 "@
     }
+
+    $ledgerBlock = ""
+    if ($ledger) {
+        $ledgerBlock = @"
+## ALREADY-EVALUATED ISSUES - DO NOT RE-EVALUATE REJECTED ONES
+
+$ledger
+
+---
+
+"@
+    }
+
+    return $OpenPrBlock + $patternsBlock + $lessonsBlock + $ledgerBlock + $base
 }
 
-# --- Open-PR cap guard (standing rule: <=1 open PR across GitHub) -------------
-# Daily runs must not stack PRs. If an open PR already exists, force the agent
-# into evaluation-only mode so it ends with NO SUBMISSION RECOMMENDED.
+# --- Open-PR cap guard -------------------------------------------------------
+
 $OpenPrBlock = ""
+$Capped = $false
 try {
-    # NOTE: Windows PowerShell 5.1 ConvertFrom-Json returns a JSON array as a
-    # single object, so assign first then re-wrap with @() to get a real count.
     $openPrsRaw = gh search prs --author "TSS99" --state open --json url,title 2>$null | ConvertFrom-Json
     $openPrs = @($openPrsRaw)
     if ($openPrs.Count -ge 1) {
+        $Capped = $true
         $list = ($openPrs | ForEach-Object { "- $($_.title) ($($_.url))" }) -join "`n"
         $OpenPrBlock = @"
 ## HARD CONSTRAINT - OPEN PR CAP REACHED
@@ -85,222 +121,250 @@ try {
 You currently have $($openPrs.Count) open PR(s):
 $list
 
-The standing rule is a maximum of ONE open PR at a time. An open PR already
-exists, so you MUST NOT open a new PR this run. You may evaluate and prepare,
-but you MUST end with:
-
-NO SUBMISSION RECOMMENDED
-
-stating that the open-PR cap is the blocker.
+The standing rule is a maximum of ONE open PR at a time. You MUST NOT open a new
+PR this run. End with NO SUBMISSION RECOMMENDED, citing the open-PR cap.
 
 ---
 
 "@
-        Write-Host "Open-PR cap reached ($($openPrs.Count)) - agent in evaluation-only mode." -ForegroundColor Yellow
     }
 } catch {
     Write-Host "Warning: could not query open PRs ($_). Proceeding without guard." -ForegroundColor DarkYellow
 }
 
-$FullPrompt = $OpenPrBlock + $LessonsBlock + $BasePrompt
-
 # --- Dry run -----------------------------------------------------------------
 
 if ($DryRun) {
-    Write-Host "=== DRY RUN: ASSEMBLED PROMPT ===" -ForegroundColor Cyan
-    Write-Host $FullPrompt
+    Write-Host "=== DRY RUN: Stage 1 prompt (capped=$Capped) ===" -ForegroundColor Cyan
+    Write-Host (Build-Stage1Prompt $OpenPrBlock)
     exit 0
 }
 
-# --- Setup run dir -----------------------------------------------------------
+# --- Setup -------------------------------------------------------------------
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
-$FullPrompt | Out-File -FilePath (Join-Path $RunDir "prompt-used.md") -Encoding UTF8
 
 function Log([string]$Msg, [string]$Color = "White") {
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Msg" -ForegroundColor $Color
 }
 
-# --- Main contribution run ---------------------------------------------------
-
-Log "Starting contribution agent (gpt-5.5, xhigh)..." "Cyan"
-Log "Repo: $RepoPath" "Gray"
-Log "Run:  $RunDir" "Gray"
-
-$MainOutputFile = Join-Path $RunDir "output.txt"
-
-# Pipe prompt via stdin - avoids command-line length limits on long prompts.
-# codex reads stdin when no positional prompt argument is given.
-$FullPrompt | codex exec `
-    -m gpt-5.5 `
-    -c "model_reasoning_effort=`"xhigh`"" `
-    -s workspace-write `
-    -C $RepoPath `
-    -o $MainOutputFile
-
-$MainExit = $LASTEXITCODE
-if ($MainExit -eq 0) { Log "Main run exited: 0" "Green" } else { Log "Main run exited: $MainExit" "Red" }
-
-# --- Read main output --------------------------------------------------------
-
-if (Test-Path $MainOutputFile) {
-    $MainOutput = Get-Content $MainOutputFile -Raw -Encoding UTF8
-} else {
-    $MainOutput = "(no output captured - codex may have written directly to stdout)"
-}
-
-$MainOutput | Out-File -FilePath (Join-Path $RunDir "summary.md") -Encoding UTF8
-
-# --- Stage 2: Opus 4.8 verification + submission -----------------------------
-# Stage 1 (Codex) only prepares a local branch + commit. Opus verifies the
-# change, fixes what it must, and only then pushes to the fork and opens the PR.
-
-$VerifyPromptFile = Join-Path $AgentDir "verify-prompt.md"
-$OpusOutput = ""
-
-$Stage1Submits = ($MainExit -eq 0) -and ($MainOutput -notmatch "NO SUBMISSION RECOMMENDED")
-
-if (-not $Stage1Submits) {
-    Log "Stage 1 produced no submittable change - skipping Opus verification." "Gray"
-} elseif (-not (Test-Path $VerifyPromptFile)) {
-    Log "verify-prompt.md missing - skipping Opus verification." "Red"
-} else {
-    Log "Stage 2: Opus 4.8 verifying the prepared change..." "Cyan"
-    $VerifyTemplate = Get-Content $VerifyPromptFile -Raw -Encoding UTF8
-    $VerifyPrompt = $VerifyTemplate.Replace("{{CODEX_HANDOFF}}", $MainOutput)
-
-    # Scoped tool allowlist (fail-safe: with --permission-mode default, any tool
-    # not on this list is auto-denied in headless mode rather than run). Covers
-    # git/gh, the Qiskit dev/test toolchain, and file inspection/editing.
-    # Add a line here if a future run blocks on a legitimately-needed command.
-    $AllowedTools = @(
-        "Bash(git:*)", "Bash(gh:*)",
-        "Bash(python:*)", "Bash(python3:*)", "Bash(py:*)",
-        "Bash(pytest:*)", "Bash(stestr:*)", "Bash(tox:*)", "Bash(nox:*)",
-        "Bash(black:*)", "Bash(ruff:*)", "Bash(pylint:*)", "Bash(mypy:*)",
-        "Bash(pip:*)", "Bash(reno:*)",
-        "Read", "Edit", "Write", "Grep", "Glob"
-    ) -join " "
-
-    Push-Location $RepoPath
+# Run claude headless, capture stdout. $Tools = "" means no tools needed.
+function Invoke-Claude {
+    param([string]$Prompt, [string]$Model, [string]$Tools = "", [string]$WorkDir = $AgentDir)
+    Push-Location $WorkDir
     try {
-        $OpusOutput = $VerifyPrompt | claude -p `
-            --model claude-opus-4-8 `
-            --permission-mode default `
-            --allowedTools $AllowedTools `
-            --add-dir $RepoPath 2>&1 | Out-String
+        if ($Tools) {
+            return $Prompt | claude -p --model $Model --permission-mode default --allowedTools $Tools --add-dir $WorkDir 2>&1 | Out-String
+        } else {
+            return $Prompt | claude -p --model $Model --permission-mode default 2>&1 | Out-String
+        }
     } finally {
         Pop-Location
     }
+}
 
-    $OpusOutput | Out-File -FilePath (Join-Path $RunDir "opus-verify.txt") -Encoding UTF8
+$ExistingLessons = Get-FileOrDefault $LessonsFile "(none yet)"
 
-    if ($OpusOutput -match "PR SUBMITTED") {
-        Log "Stage 2: Opus submitted the PR." "Green"
-    } elseif ($OpusOutput -match "NO SUBMISSION RECOMMENDED") {
-        Log "Stage 2: Opus blocked submission." "Yellow"
+# --- Stage 0: Feedback ingest (always) ---------------------------------------
+
+Log "Stage 0: ingesting real maintainer feedback..." "Cyan"
+$FeedbackLessons = ""
+if (Test-Path $FeedbackFile) {
+    $fbTemplate = Get-Content $FeedbackFile -Raw -Encoding UTF8
+    $fbPrompt = $fbTemplate.Replace("{{EXISTING_LESSONS}}", $ExistingLessons)
+    $FeedbackOut = Invoke-Claude -Prompt $fbPrompt -Model $CheapModel -Tools "Bash(gh:*)"
+    $FeedbackOut | Out-File -FilePath (Join-Path $RunDir "feedback.md") -Encoding UTF8
+    if ($FeedbackOut -match "NO NEW FEEDBACK") {
+        Log "No new maintainer feedback." "Gray"
     } else {
-        Log "Stage 2: Opus output unclear - review opus-verify.txt." "DarkYellow"
+        $FeedbackLessons = $FeedbackOut.Trim()
+        Log "Feedback lessons captured." "Green"
+    }
+} else {
+    Log "feedback-prompt.md missing - skipping feedback ingest." "DarkYellow"
+}
+
+$MainOutput = ""
+$OpusOutput = ""
+
+if ($Capped) {
+    Log "Open-PR cap reached - skipping pattern mining, Stage 1 and Stage 2." "Yellow"
+} else {
+
+    # --- Stage 1.5: Pattern mining (weekly) ----------------------------------
+
+    $needsMining = $true
+    if (Test-Path $PatternsFile) {
+        $ageDays = (New-TimeSpan -Start (Get-Item $PatternsFile).LastWriteTime -End (Get-Date)).TotalDays
+        if ($ageDays -lt $MineMaxAgeDays) { $needsMining = $false }
+    }
+    if ($needsMining -and (Test-Path $MineFile)) {
+        Log "Pattern mining: refreshing merged-patterns.md from upstream..." "Cyan"
+        $currentPatterns = Get-FileOrDefault $PatternsFile "(none yet)"
+        $mineTemplate = Get-Content $MineFile -Raw -Encoding UTF8
+        $minePrompt = $mineTemplate.Replace("{{CURRENT_PATTERNS}}", $currentPatterns)
+        $MineOut = Invoke-Claude -Prompt $minePrompt -Model $CheapModel -Tools "Bash(gh:*) Read Write Edit"
+        $MineOut | Out-File -FilePath (Join-Path $RunDir "mining.md") -Encoding UTF8
+        Log "Pattern mining done." "Green"
+    } else {
+        Log "Patterns fresh (< $MineMaxAgeDays days) - skipping mining." "Gray"
+    }
+
+    # --- Stage 1: Codex prepare ----------------------------------------------
+
+    $Stage1Prompt = Build-Stage1Prompt $OpenPrBlock
+    $Stage1Prompt | Out-File -FilePath (Join-Path $RunDir "prompt-used.md") -Encoding UTF8
+
+    Log "Stage 1: Codex ($CodexModel, xhigh) preparing contribution..." "Cyan"
+    Log "Repo: $RepoPath" "Gray"
+    $MainOutputFile = Join-Path $RunDir "output.txt"
+
+    $Stage1Prompt | codex exec `
+        -m $CodexModel `
+        -c "model_reasoning_effort=`"xhigh`"" `
+        -s workspace-write `
+        -C $RepoPath `
+        -o $MainOutputFile
+
+    $MainExit = $LASTEXITCODE
+    if ($MainExit -eq 0) { Log "Stage 1 exited: 0" "Green" } else { Log "Stage 1 exited: $MainExit" "Red" }
+
+    if (Test-Path $MainOutputFile) {
+        $MainOutput = Get-Content $MainOutputFile -Raw -Encoding UTF8
+    } else {
+        $MainOutput = "(no output captured)"
+    }
+    $MainOutput | Out-File -FilePath (Join-Path $RunDir "summary.md") -Encoding UTF8
+
+    # --- Stage 2: Opus verify + submit ---------------------------------------
+
+    $Stage1Submits = ($MainExit -eq 0) -and ($MainOutput -notmatch "NO SUBMISSION RECOMMENDED")
+
+    if (-not $Stage1Submits) {
+        Log "Stage 1 produced no submittable change - skipping Opus verification." "Gray"
+    } elseif (-not (Test-Path $VerifyFile)) {
+        Log "verify-prompt.md missing - skipping Opus verification." "Red"
+    } else {
+        Log "Stage 2: Opus ($OpusModel) verifying the prepared change..." "Cyan"
+        $verifyTemplate = Get-Content $VerifyFile -Raw -Encoding UTF8
+        $verifyPrompt = $verifyTemplate.Replace("{{CODEX_HANDOFF}}", $MainOutput)
+
+        $AllowedTools = @(
+            "Bash(git:*)", "Bash(gh:*)",
+            "Bash(python:*)", "Bash(python3:*)", "Bash(py:*)",
+            "Bash(pytest:*)", "Bash(stestr:*)", "Bash(tox:*)", "Bash(nox:*)",
+            "Bash(black:*)", "Bash(ruff:*)", "Bash(pylint:*)", "Bash(mypy:*)",
+            "Bash(pip:*)", "Bash(reno:*)",
+            "Read", "Edit", "Write", "Grep", "Glob"
+        ) -join " "
+
+        Push-Location $RepoPath
+        try {
+            $OpusOutput = $verifyPrompt | claude -p `
+                --model $OpusModel `
+                --permission-mode default `
+                --allowedTools $AllowedTools `
+                --add-dir $RepoPath 2>&1 | Out-String
+        } finally {
+            Pop-Location
+        }
+        $OpusOutput | Out-File -FilePath (Join-Path $RunDir "opus-verify.txt") -Encoding UTF8
+
+        if ($OpusOutput -match "PR SUBMITTED") {
+            Log "Stage 2: Opus submitted the PR." "Green"
+        } elseif ($OpusOutput -match "NO SUBMISSION RECOMMENDED") {
+            Log "Stage 2: Opus blocked submission." "Yellow"
+        } else {
+            Log "Stage 2: Opus output unclear - review opus-verify.txt." "DarkYellow"
+        }
+    }
+
+    # --- Stage 4: Ledger update ----------------------------------------------
+
+    if ($MainOutput -and $MainOutput -ne "(no output captured)") {
+        Log "Recording evaluated issues to ledger..." "Yellow"
+        $ledgerPrompt = @"
+From the contribution transcript below, list every GitHub issue that was
+evaluated as a candidate, one per line, in this exact format:
+
+<issue-url> | <reject|prepared> | <=10-word reason
+
+Only output those lines. No headers, no commentary. If no issues were evaluated,
+output exactly: NONE
+
+Transcript:
+---
+$MainOutput
+---
+"@
+        $ledgerOut = (Invoke-Claude -Prompt $ledgerPrompt -Model $CheapModel).Trim()
+        if ($ledgerOut -and $ledgerOut -ne "NONE") {
+            $today = Get-Date -Format "yyyy-MM-dd"
+            if (-not (Test-Path $LedgerFile)) {
+                "# Evaluated issues (skip re-evaluating rejected ones)`n" | Out-File -FilePath $LedgerFile -Encoding UTF8
+            }
+            ($ledgerOut -split "`n" | ForEach-Object { "- $today | $($_.Trim())" }) -join "`n" |
+                Out-File -FilePath $LedgerFile -Append -Encoding UTF8
+            "" | Out-File -FilePath $LedgerFile -Append -Encoding UTF8
+            Log "Ledger updated." "Green"
+        }
     }
 }
 
-# Combined transcript for self-evaluation (both stages learn from each run).
-$EvalTranscript = $MainOutput
-if ($OpusOutput) {
-    $EvalTranscript += "`n`n=== STAGE 2 (OPUS 4.8 VERIFICATION) ===`n$OpusOutput"
-}
+# --- Stage 5: Lesson curator (always) ----------------------------------------
 
-# --- Self-evaluation: extract lessons ----------------------------------------
+Log "Curating lessons (merge + dedup + cap)..." "Yellow"
+$transcriptForCurate = ""
+if ($MainOutput) { $transcriptForCurate += "=== STAGE 1 (CODEX) ===`n$MainOutput`n`n" }
+if ($OpusOutput)  { $transcriptForCurate += "=== STAGE 2 (OPUS) ===`n$OpusOutput`n`n" }
+if (-not $transcriptForCurate) { $transcriptForCurate = "(no contribution run this cycle - capped)" }
 
-Log "Running self-evaluation to extract lessons..." "Yellow"
-
-if (Test-Path $LessonsFile) {
-    $ExistingLessons = Get-Content $LessonsFile -Raw -Encoding UTF8
-} else {
-    $ExistingLessons = "(none yet)"
-}
-
-$SelfEvalPrompt = @"
-You are reviewing the performance of a two-stage Qiskit contribution pipeline
-(Stage 1 = Codex prepares the change; Stage 2 = Opus verifies, fixes, submits).
-
-Below is the combined output from the most recent run:
-
----
-$EvalTranscript
----
-
-Your task: extract concrete, actionable lessons from this run.
+$curatePrompt = @"
+You curate the lessons file for a Qiskit contribution agent. Produce a clean,
+deduplicated, prioritized lessons list. Output ONLY the new file contents.
 
 Rules:
-1. Be brutally specific. "Be more careful" is worthless.
-2. Focus on: wrong assumptions, rule violations, missed checks, unnecessary actions, near-misses, issues that nearly caused a bad PR.
-3. Each lesson is one sentence starting with an imperative verb (e.g. "Verify", "Never", "Always", "Check").
-4. Maximum 5 new lessons. Zero is fine if the run was clean.
-5. Do NOT repeat lessons already in the existing list below.
-6. If the run ended with NO SUBMISSION RECOMMENDED for the right reasons, note what gate caught it.
+- Keep at most 30 lessons total. If over, merge near-duplicates and drop the
+  weakest/most generic.
+- Each lesson is one line: `- [TAG]: <imperative lesson>` where TAG is one of
+  FEEDBACK (real maintainer signal - highest priority, never drop these),
+  SELECTION (issue picking), TECHNICAL (the fix/tests), PRSTYLE (PR body/branch).
+- Incorporate the new feedback lessons and any lessons implied by this run.
+- Be specific and actionable. No generic filler. No commentary, no headers other
+  than the lines themselves.
 
-Existing lessons (do not duplicate):
+CURRENT LESSONS:
 $ExistingLessons
 
-Output format - ONLY these lines, nothing else:
-- [LESSON]: <lesson text>
+NEW FEEDBACK LESSONS (highest priority - integrate, tag FEEDBACK):
+$FeedbackLessons
 
-If there are no new lessons worth adding, output exactly one line:
-NO NEW LESSONS
+THIS RUN's TRANSCRIPT (extract any concrete lesson):
+---
+$transcriptForCurate
+---
 "@
 
-$LessonsOutputFile = Join-Path $RunDir "new-lessons.txt"
-
-$SelfEvalPrompt | codex exec `
-    -m gpt-5.5 `
-    -c "model_reasoning_effort=`"xhigh`"" `
-    -s workspace-write `
-    -C $AgentDir `
-    --ephemeral `
-    -o $LessonsOutputFile
-
-# --- Append new lessons ------------------------------------------------------
-
-if (Test-Path $LessonsOutputFile) {
-    $NewLessons = (Get-Content $LessonsOutputFile -Raw -Encoding UTF8).Trim()
-
-    if ($NewLessons -and $NewLessons -ne "NO NEW LESSONS") {
-        $RunDate = Get-Date -Format "yyyy-MM-dd HH:mm"
-        $Entry   = "`n### Run $Timestamp ($RunDate)`n$NewLessons`n"
-
-        if (-not (Test-Path $LessonsFile)) {
-            "# Learned Lessons`n" | Out-File -FilePath $LessonsFile -Encoding UTF8
-        }
-
-        $Entry | Out-File -FilePath $LessonsFile -Append -Encoding UTF8
-        Log "New lessons saved:" "Green"
-        Write-Host $NewLessons -ForegroundColor Cyan
-    } else {
-        Log "No new lessons extracted." "Gray"
-    }
+$Curated = (Invoke-Claude -Prompt $curatePrompt -Model $CheapModel).Trim()
+if ($Curated -and $Curated.Length -gt 10) {
+    $Curated | Out-File -FilePath $LessonsFile -Encoding UTF8
+    Log "lessons.md rewritten (curated)." "Green"
 } else {
-    Log "Self-eval produced no output file." "DarkYellow"
+    Log "Curator returned nothing usable - leaving lessons.md unchanged." "DarkYellow"
 }
 
-# --- Push artifacts + lessons to private backup repo -------------------------
+# --- Stage 6: Backup push ----------------------------------------------------
 
 Log "Committing run artifacts to backup repo..." "Yellow"
 git -C $AgentDir add -A 2>&1 | Out-Null
-$CommitMsg = "Run $Timestamp (main exit $MainExit)"
+$CommitMsg = "Run $Timestamp (capped=$Capped)"
 git -C $AgentDir -c user.name="TSS99" -c user.email="tilock.2025@gmail.com" commit -m $CommitMsg 2>&1 | Out-Null
 if ($LASTEXITCODE -eq 0) {
     git -C $AgentDir push 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Log "Pushed to backup repo." "Green"
-    } else {
-        Log "Push failed - artifacts committed locally only." "Red"
-    }
+    if ($LASTEXITCODE -eq 0) { Log "Pushed to backup repo." "Green" }
+    else { Log "Push failed - artifacts committed locally only." "Red" }
 } else {
     Log "Nothing new to commit." "Gray"
 }
 
-# --- Done --------------------------------------------------------------------
-
 Log "Done. Artifacts: $RunDir" "Cyan"
-Log "Lessons file:    $LessonsFile" "Cyan"
