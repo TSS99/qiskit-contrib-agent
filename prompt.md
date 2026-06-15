@@ -245,6 +245,11 @@ Infer local style from adjacent code. Do not invent patterns.
 Implementation phase:
 Make the smallest correct change.
 
+Start from an up-to-date base: the working tree may currently be on an old
+branch. Run `git fetch upstream`, check out the default branch, fast-forward it
+to `upstream/main` (origin is the fork, upstream is Qiskit/qiskit), then create
+your new branch from there. Never branch off a leftover feature branch.
+
 Rules:
 1. Create a branch with a boring technical name, such as:
    - fix-compose-width-error

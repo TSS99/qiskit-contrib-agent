@@ -15,13 +15,14 @@
       6. Backup push                     - commit artifacts to private repo.
 
 .PARAMETER RepoPath
-    Path to local Qiskit repo. Defaults to D:\CDAC Projects\Qiskit_Advocate.
+    Path to the local Qiskit git clone. Must be a real git checkout (the parent
+    Qiskit_Advocate folder is NOT one). Defaults to the qiskit fork clone.
 
 .PARAMETER DryRun
     Print the assembled Stage 1 prompt and exit. No model calls, no pushes.
 #>
 param(
-    [string]$RepoPath = "D:\CDAC Projects\Qiskit_Advocate",
+    [string]$RepoPath = "D:\CDAC Projects\Qiskit_Advocate\qiskit",
     [switch]$DryRun
 )
 
@@ -50,6 +51,10 @@ $MineMaxAgeDays = 7
 
 if (-not (Test-Path $PromptFile)) { Write-Error "prompt.md not found at $PromptFile"; exit 1 }
 if (-not (Test-Path $RepoPath))   { Write-Error "Repo path does not exist: $RepoPath"; exit 1 }
+if (-not (Test-Path (Join-Path $RepoPath ".git"))) {
+    Write-Error "RepoPath is not a git checkout: $RepoPath (point it at the clone, e.g. ...\Qiskit_Advocate\qiskit)"
+    exit 1
+}
 
 function Get-FileOrDefault([string]$Path, [string]$Default) {
     if (Test-Path $Path) {
