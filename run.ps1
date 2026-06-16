@@ -247,10 +247,15 @@ if ($Capped) {
     Log "Repo: $RepoPath" "Gray"
     $MainOutputFile = Join-Path $RunDir "output.txt"
 
+    # danger-full-access (not workspace-write): on Windows the sandboxed token
+    # can't acquire schannel TLS credentials, so `git fetch` fails even with
+    # network enabled. Full access matches the user's global codex config
+    # (approval=never, trusted project) and Stage 1 only prepares a local commit
+    # - push/PR are gated to Stage 2 Opus, which runs with a scoped allowlist.
     $Stage1Prompt | codex exec `
         -m $CodexModel `
         -c "model_reasoning_effort=`"xhigh`"" `
-        -s workspace-write `
+        -s danger-full-access `
         -C $RepoPath `
         -o $MainOutputFile
 
