@@ -1,0 +1,34 @@
+NO SUBMISSION RECOMMENDED
+
+Reason: the technical preflight failed before issue selection. `cargo` and `rustup` are not on `PATH`, and importing local Qiskit fails with:
+
+```text
+ImportError: cannot import name '_accelerate'
+```
+
+What was checked:
+- Read `CONTRIBUTING.md`, `.github/PULL_REQUEST_TEMPLATE.md`, bug issue template, release-note docs, and `qiskit_bot.yaml`.
+- Ran `git fetch upstream`: passed.
+- Checked `cargo --version`: failed, command not found.
+- Checked `rustup --version`: failed, command not found.
+- Checked `python -c "import qiskit"`: failed due missing local `_accelerate`.
+
+Policy constraints that matter:
+- AI assistance must be disclosed in the PR description.
+- User-facing fixes need a `reno` release note.
+- Tests and style/lint are expected before review.
+- PR titles must be concise and explanatory.
+- The PR template’s AI/LLM disclosure section must be retained and filled honestly.
+
+Blocked submission:
+- I cannot honestly reproduce or validate a Qiskit bug on current local `main` without a working Rust-backed Qiskit import.
+- Per your own gate, issue selection should stop when the local Rust extension cannot build/import and `cargo` is unavailable.
+
+Before trying again:
+1. Install Rust via `rustup` and ensure `cargo` is on `PATH`.
+2. Install build/test deps, e.g. `python -m pip install --group build --group test`.
+3. From repo root, run `python setup.py build_rust --inplace`.
+4. Confirm `python -c "import qiskit; import qiskit._accelerate"` succeeds.
+5. Then rerun the contribution search from an updated `upstream/main`.
+
+No branch was created, no files were edited, and no commit was made.
