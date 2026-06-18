@@ -1,0 +1,36 @@
+NO SUBMISSION RECOMMENDED
+
+**Reason**
+The required technical gate failed before issue selection: `cargo` is not installed or on PATH, and `python -c "import qiskit._accelerate"` fails from the checkout. Qiskit’s current source build depends on Rust, so I cannot honestly reproduce bugs on current `main`, build the extension, or run relevant validation.
+
+**What Was Checked**
+- Read [CONTRIBUTING.md](<D:\CDAC Projects\Qiskit_Advocate\qiskit\CONTRIBUTING.md:1>), PR template, issue templates, and release-note docs.
+- `git fetch upstream`: passed.
+- Current branch: `main`, status `main...origin/main [ahead 203]`.
+- Local HEAD: `b3d0f9312 Fix link (#16439)`.
+- `upstream/main`: `e6a036a1c`.
+- `cargo --version`: failed, command not found.
+- `rustup`: not found.
+- `$USERPROFILE\.cargo\bin\cargo.exe`: not present.
+- `python -c "import qiskit._accelerate"`: failed with missing `_accelerate` import.
+
+**Policy Constraints Found**
+- AI use must be disclosed in the PR description when used; Qiskit’s template has an `AI/LLM disclosure` section.
+- User-facing changes need a Reno release note.
+- PR titles should be concise and explanatory.
+- Tests and lint are expected; `tox -elint`, targeted `tox -epy...`, and Rust validation via `tox -erust` / cargo are relevant.
+- Changelog labels are handled through `Changelog:` labels.
+
+**Blocked Submission**
+No issue shortlist, branch, code edit, test, release note, or commit was created. Continuing would violate the “reproduce on current main before fixing” and Rust build/import gates.
+
+**Before Trying Again**
+Install Rust via `rustup` plus the required Windows MSVC build tools, then confirm:
+
+```powershell
+cargo --version
+python setup.py build_rust --inplace
+python -c "import qiskit._accelerate; print('ok')"
+```
+
+Also start from a clean, fast-forwarded `upstream/main` branch before selecting any issue.
