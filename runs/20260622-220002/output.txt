@@ -1,0 +1,34 @@
+NO SUBMISSION RECOMMENDED
+
+**Reason**
+The mandatory local environment gate failed before issue selection. Current `upstream/main` cannot honestly be reproduced or tested here because Rust is unavailable and the local Qiskit extension does not import.
+
+**What Was Checked**
+- Read `CONTRIBUTING.md`, `.github/PULL_REQUEST_TEMPLATE.md`, bug/feature issue templates, and `qiskit_bot.yaml`.
+- Confirmed Qiskit requires AI-tool disclosure in PR descriptions if AI was used.
+- Confirmed user-facing fixes need release notes, usually under `releasenotes/notes/...`.
+- Confirmed validation expectations: targeted Python tests via `tox`/`stestr`, Rust tests via `cargo`/`tox -erust`, lint via `tox -elint`.
+- Fetched and fast-forwarded local `main` to `upstream/main`.
+
+**Blocked Submission**
+Command results:
+- `git fetch upstream`: passed.
+- `git merge --ff-only upstream/main`: passed, now at `ea2546703 Open development for 2.6 (#16451)`.
+- `cargo --version`: failed, `cargo` not recognized.
+- `where.exe cargo`: failed, not found.
+- `$env:USERPROFILE\.cargo\bin\cargo.exe`: not present.
+- `python -c "import qiskit._accelerate"`: failed with `ImportError`.
+- `git status --short --branch`: clean worktree, on `main`, ahead of `origin/main` by 216 because it was fast-forwarded to upstream.
+
+No issue shortlist was built, no branch was created, no files were edited, no commit was made.
+
+**What To Learn Before Trying Again**
+Install a working Rust toolchain and ensure current `main` builds/imports locally first:
+
+```powershell
+cargo --version
+python setup.py build_rust --inplace
+python -c "import qiskit._accelerate; print(qiskit._accelerate.__file__)"
+```
+
+Until those pass on current `upstream/main`, selecting or preparing a Qiskit bug-fix PR would violate the “reproduce before fix” rule.
