@@ -38,6 +38,7 @@ $LessonsFile  = Join-Path $AgentDir "lessons.md"
 $PatternsFile = Join-Path $AgentDir "merged-patterns.md"
 $LedgerFile   = Join-Path $AgentDir "evaluated-issues.md"
 $AgentPrsFile = Join-Path $AgentDir "agent-prs.md"
+$CapFlagFile  = Join-Path $AgentDir "manual-cap.flag"
 $RunsDir      = Join-Path $AgentDir "runs"
 $Timestamp    = Get-Date -Format "yyyyMMdd-HHmmss"
 $RunDir       = Join-Path $RunsDir $Timestamp
@@ -119,8 +120,22 @@ $ledger
 # work the user has chosen to leave as-is.
 $OpenPrBlock = ""
 $Capped = $false
+# Fail-safe: a prior run that opened a PR but could not parse its URL drops this
+# flag so the cap still engages. Clear it manually once you've confirmed PR state.
+if (Test-Path $CapFlagFile) {
+    $Capped = $true
+    $OpenPrBlock = @"
+## HARD CONSTRAINT - ONE-AT-A-TIME CAP
+
+A prior run reported a submitted PR whose URL could not be parsed, so this hold
+is in place. Open no new PR. End with NO SUBMISSION RECOMMENDED, citing the cap.
+
+---
+
+"@
+}
 try {
-    if (Test-Path $AgentPrsFile) {
+    if (-not $Capped -and (Test-Path $AgentPrsFile)) {
         $trackedUrls = @(
             Get-Content $AgentPrsFile -Encoding UTF8 |
             ForEach-Object {
@@ -299,6 +314,17 @@ if ($Capped -or -not $BuildOk) {
     } elseif (-not (Test-Path $VerifyFile)) {
         Log "verify-prompt.md missing - skipping Opus verification." "Red"
     } else {
+        # Stage 1 fast-forwards main to upstream before committing its fix, so the
+        # _accelerate binary setup-build.ps1 compiled at an older commit may be
+        # stale. Rebuild against the branch state before Opus runs any tests, so
+        # validation reflects current source, not an outdated extension.
+        Log "Rebuilding qiskit._accelerate before verification..." "Cyan"
+        Push-Location $RepoPath
+        try { pip install -e . 2>&1 | Out-Null } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) {
+            Log "Rebuild reported a non-zero exit - Opus will run against a possibly stale extension." "DarkYellow"
+        }
+
         Log "Stage 2: Opus ($OpusModel) verifying the prepared change..." "Cyan"
         $verifyTemplate = Get-Content $VerifyFile -Raw -Encoding UTF8
         $verifyPrompt = $verifyTemplate.Replace("{{CODEX_HANDOFF}}", $MainOutput)
@@ -308,7 +334,7 @@ if ($Capped -or -not $BuildOk) {
             "Bash(python:*)", "Bash(python3:*)", "Bash(py:*)",
             "Bash(pytest:*)", "Bash(stestr:*)", "Bash(tox:*)", "Bash(nox:*)",
             "Bash(black:*)", "Bash(ruff:*)", "Bash(pylint:*)", "Bash(mypy:*)",
-            "Bash(pip:*)", "Bash(reno:*)",
+            "Bash(pip:*)", "Bash(reno:*)", "Bash(cargo:*)", "Bash(maturin:*)",
             "Read", "Edit", "Write", "Grep", "Glob"
         ) -join " "
 
@@ -334,7 +360,9 @@ if ($Capped -or -not $BuildOk) {
                 "- $today | $prUrl" | Out-File -FilePath $AgentPrsFile -Append -Encoding UTF8
                 Log "Stage 2: Opus submitted the PR. Tracked: $prUrl" "Green"
             } else {
-                Log "Stage 2: Opus reported PR SUBMITTED but no URL parsed - one-at-a-time cap may not engage. Check opus-verify.txt." "Red"
+                "PR SUBMITTED on $(Get-Date -Format 'yyyy-MM-dd HH:mm') but URL not parsed - see runs\$Timestamp\opus-verify.txt. Delete this file once PR state is confirmed." |
+                    Out-File -FilePath $CapFlagFile -Encoding UTF8
+                Log "Stage 2: Opus reported PR SUBMITTED but no URL parsed. Dropped manual-cap.flag to block new PRs. Check opus-verify.txt." "Red"
             }
         } elseif ($OpusOutput -match "NO SUBMISSION RECOMMENDED") {
             Log "Stage 2: Opus blocked submission." "Yellow"
