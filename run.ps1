@@ -47,6 +47,8 @@ $CodexModel = "gpt-5.5"
 $CheapModel = "claude-sonnet-4-6"
 $OpusModel  = "claude-opus-4-8"
 $MineMaxAgeDays = 7
+$MaxOpenPrs     = 3   # ceiling on concurrent open agent-created PRs
+$PrCadenceDays  = 7   # target: land at least one agent PR per this many days
 
 # --- Validate ----------------------------------------------------------------
 
@@ -112,65 +114,104 @@ $ledger
     return $OpenPrBlock + $patternsBlock + $lessonsBlock + $ledgerBlock + $base
 }
 
-# --- One-at-a-time cap guard -------------------------------------------------
-# Policy: pre-existing PRs (the legacy 5) are left alone and do NOT count. The
-# agent only counts PRs IT opened (tracked in agent-prs.md). If any of those is
-# still open, do not open another - one agent PR at a time. This honors the
-# anti-volume feedback (jakelishman batch-closed 8 PRs) without blocking on old
-# work the user has chosen to leave as-is.
+# --- PR cadence + concurrency guard ------------------------------------------
+# Policy (user-set): land at least one agent PR every $PrCadenceDays days, even
+# if earlier ones are still unmerged, up to a ceiling of $MaxOpenPrs concurrently
+# open. Legacy pre-existing PRs do not count; only agent PRs in agent-prs.md.
+# Stage 1/2 run only when a PR is DUE and we are UNDER the ceiling ($Escalate).
+# The correctness floor (reproducer fails on main + tests pass) is enforced in
+# the Stage 1 prompt - a week may still be skipped if nothing clears it.
 $OpenPrBlock = ""
-$Capped = $false
+$Capped    = $false   # at ceiling or unsafe to submit -> skip Stage 1/2
+$Escalate  = $false   # PR due and under ceiling       -> push Stage 1 to land one
+$WeeklyDue = $false
+$OpenCount = 0
+
 # Fail-safe: a prior run that opened a PR but could not parse its URL drops this
-# flag so the cap still engages. Clear it manually once you've confirmed PR state.
+# flag so we hold. Clear it manually once you've confirmed PR state.
 if (Test-Path $CapFlagFile) {
     $Capped = $true
     $OpenPrBlock = @"
-## HARD CONSTRAINT - ONE-AT-A-TIME CAP
+## HARD CONSTRAINT - PR TRACKING HOLD
 
 A prior run reported a submitted PR whose URL could not be parsed, so this hold
-is in place. Open no new PR. End with NO SUBMISSION RECOMMENDED, citing the cap.
+is in place. Open no new PR. End with NO SUBMISSION RECOMMENDED, citing the hold.
 
 ---
 
 "@
 }
-try {
-    if (-not $Capped -and (Test-Path $AgentPrsFile)) {
+
+if (-not $Capped) {
+  try {
+    $openUrls = @()
+    $lastPrDate = $null
+    if (Test-Path $AgentPrsFile) {
+        $lines = Get-Content $AgentPrsFile -Encoding UTF8
+        foreach ($ln in $lines) {
+            $dm = [regex]::Match($ln, "\d{4}-\d{2}-\d{2}")
+            if ($dm.Success) {
+                $d = [datetime]::ParseExact($dm.Value, "yyyy-MM-dd", $null)
+                if (-not $lastPrDate -or $d -gt $lastPrDate) { $lastPrDate = $d }
+            }
+        }
         $trackedUrls = @(
-            Get-Content $AgentPrsFile -Encoding UTF8 |
-            ForEach-Object {
+            $lines | ForEach-Object {
                 $m = [regex]::Match($_, "https?://github\.com/[^\s)]+/pull/\d+")
                 if ($m.Success) { $m.Value }
             } | Select-Object -Unique
         )
-        $stillOpen = @()
         foreach ($u in $trackedUrls) {
             $st = (gh pr view $u --json state 2>$null | ConvertFrom-Json).state
-            # Fail closed: if state can't be determined (gh auth/network), assume
-            # the PR is still open rather than risk opening a second one.
-            if (-not $st -or $st -eq "OPEN") { $stillOpen += $u }
+            # Fail closed: undeterminable state (gh auth/network) counts as open.
+            if (-not $st -or $st -eq "OPEN") { $openUrls += $u }
         }
-        if ($stillOpen.Count -ge 1) {
-            $Capped = $true
-            $list = ($stillOpen | ForEach-Object { "- $_" }) -join "`n"
-            $OpenPrBlock = @"
-## HARD CONSTRAINT - ONE-AT-A-TIME CAP
+    }
+    $OpenCount = $openUrls.Count
+    $WeeklyDue = (-not $lastPrDate) -or
+                 ((New-TimeSpan -Start $lastPrDate -End (Get-Date)).TotalDays -ge $PrCadenceDays)
 
-The agent already has an open PR it created:
+    if ($OpenCount -ge $MaxOpenPrs) {
+        $Capped = $true
+        $list = ($openUrls | ForEach-Object { "- $_" }) -join "`n"
+        $OpenPrBlock = @"
+## HARD CONSTRAINT - CONCURRENT PR CEILING ($MaxOpenPrs)
+
+$MaxOpenPrs agent PRs are already open:
 $list
 
-Open at most ONE agent-created PR at a time. Do not open another until that one
-merges or closes. End with NO SUBMISSION RECOMMENDED, citing the one-at-a-time cap.
+Do not open another until one merges or closes. End with NO SUBMISSION
+RECOMMENDED, citing the concurrency ceiling.
 
 ---
 
 "@
-        }
+    } elseif ($WeeklyDue) {
+        $Escalate = $true
+        $OpenPrBlock = @"
+## WEEKLY TARGET DUE - LAND ONE PR THIS RUN (floor still applies)
+
+It has been at least $PrCadenceDays days since the last agent PR (or there is
+none yet), and $OpenCount of $MaxOpenPrs agent PRs are open, so you MAY open one
+more. Actively search, pick the single best available candidate, prepare it, and
+hand off with DECISION: SUBMIT.
+
+Correctness floor - do NOT breach it to hit the target:
+- the reproducer MUST fail on unpatched current main, and
+- your added/changed tests MUST pass after the fix.
+If after honest effort nothing clears this floor, end with NO SUBMISSION
+RECOMMENDED. A missed week is acceptable; a junk PR is not. Bias toward narrow
+transpiler/primitives bugs per the merge patterns above.
+
+---
+
+"@
     }
-} catch {
-    # Fail closed: a broken cap check must not let a second PR through.
+  } catch {
+    # Fail closed: a broken cap check must not let an untracked PR through.
     $Capped = $true
     Write-Host "Could not check agent PR status ($_). Failing closed - skipping contribution stages this run." -ForegroundColor Red
+  }
 }
 
 # --- Dry run -----------------------------------------------------------------
@@ -263,11 +304,14 @@ if (-not $GhOk) {
     Log "GH AUTH FAILED: gh is not authenticated. Stage 1 + Stage 2 skipped. Run: gh auth login" "Red"
 }
 
-if ($Capped -or -not $BuildOk -or -not $GhOk) {
-    if ($Capped)         { Log "Open-PR cap reached - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
-    elseif (-not $BuildOk) { Log "Build gate failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
-    else                 { Log "gh auth failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+if (-not ($Escalate -and $BuildOk -and $GhOk)) {
+    if (-not $BuildOk)       { Log "Build gate failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+    elseif (-not $GhOk)      { Log "gh auth failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+    elseif ($Capped)         { Log "At concurrency ceiling ($OpenCount/$MaxOpenPrs open) - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+    elseif (-not $WeeklyDue) { Log "No PR due yet (last agent PR < $PrCadenceDays days ago) - skipping pattern mining, Stage 1 and Stage 2." "Gray" }
+    else                     { Log "Skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
 } else {
+    Log "PR due and under ceiling ($OpenCount/$MaxOpenPrs open) - running contribution stages." "Cyan"
 
     # --- Stage 1.5: Pattern mining (weekly) ----------------------------------
 

@@ -15,19 +15,26 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# This whole script drives native exes (winget, rustup, pip, cargo). In PS 5.1 a
+# native command writing to stderr becomes a fatal NativeCommandError under "Stop"
+# even on success (e.g. `rustup default stable` prints an info line to stderr), so
+# stay on Continue and gate on exit codes / verification instead.
+$ErrorActionPreference = "Continue"
 
 if (-not (Test-Path (Join-Path $RepoPath ".git"))) {
-    Write-Error "RepoPath is not a git checkout: $RepoPath"; exit 1
+    Write-Host "RepoPath is not a git checkout: $RepoPath" -ForegroundColor Red; exit 1
 }
 
-Write-Host "== 1/3 Rust toolchain ==" -ForegroundColor Cyan
+Write-Host "== 1/4 Rust toolchain ==" -ForegroundColor Cyan
+# rustup installs to ~/.cargo/bin and updates the user PATH, but the current
+# process may not see it yet; prepend it so cargo is usable this run.
+$cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+if (Test-Path $cargoBin) { $env:Path = "$cargoBin;$env:Path" }
 if (Get-Command cargo -ErrorAction SilentlyContinue) {
     Write-Host "cargo present: $(cargo --version)" -ForegroundColor Green
 } else {
     Write-Host "Installing Rust via winget..." -ForegroundColor Yellow
     winget install --id Rustlang.Rustup -e --accept-source-agreements --accept-package-agreements
-    $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
     if (Test-Path $cargoBin) { $env:Path = "$cargoBin;$env:Path" }
     rustup default stable
 }
@@ -52,8 +59,6 @@ if ($haveVc) {
 }
 
 Write-Host "== 3/4 Build qiskit (_accelerate) ==" -ForegroundColor Cyan
-# Native commands print progress to stderr; don't let that abort under Stop.
-$ErrorActionPreference = "Continue"
 Push-Location $RepoPath
 try {
     pip install -e .

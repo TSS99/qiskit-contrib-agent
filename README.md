@@ -22,9 +22,13 @@ Codex (gpt-5.5, xhigh reasoning). Backs up every run + learned lessons here.
 0. **Feedback ingest** (Sonnet + gh) — reads TSS99's merged/closed/open PRs and
    the maintainer comments on them, turning real reactions into `[FEEDBACK]`
    lessons. This is the primary, fastest learning signal.
-1. **Open-PR cap guard** — if a PR by `TSS99` is open anywhere, the expensive
-   contribution stages (mining, Stage 1, Stage 2) are **skipped entirely**;
-   only feedback + curation + backup run. Enforces the ≤1-open-PR cap cheaply.
+1. **PR cadence + concurrency guard** — targets **≥1 agent PR every 7 days**,
+   even while earlier ones are unmerged, up to a ceiling of **3 concurrently open**
+   agent PRs (tracked in `agent-prs.md`; legacy PRs don't count). The expensive
+   stages (mining, Stage 1, Stage 2) run only when a PR is *due* and we are *under
+   the ceiling*; otherwise only feedback + curation + backup run. The correctness
+   floor still applies — a week is skipped rather than ship a PR that can't
+   reproduce its bug on main with passing tests.
 2. **Pattern mining** (Sonnet + gh, weekly) — studies recently merged upstream
    PRs and rewrites `merged-patterns.md` so issue selection follows what works.
 3. **Stage 1 — Codex prepares** (gpt-5.5, xhigh) — picks a candidate guided by
