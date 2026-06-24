@@ -146,7 +146,9 @@ try {
         $stillOpen = @()
         foreach ($u in $trackedUrls) {
             $st = (gh pr view $u --json state 2>$null | ConvertFrom-Json).state
-            if ($st -eq "OPEN") { $stillOpen += $u }
+            # Fail closed: if state can't be determined (gh auth/network), assume
+            # the PR is still open rather than risk opening a second one.
+            if (-not $st -or $st -eq "OPEN") { $stillOpen += $u }
         }
         if ($stillOpen.Count -ge 1) {
             $Capped = $true
@@ -166,7 +168,9 @@ merges or closes. End with NO SUBMISSION RECOMMENDED, citing the one-at-a-time c
         }
     }
 } catch {
-    Write-Host "Warning: could not check agent PR status ($_). Proceeding without guard." -ForegroundColor DarkYellow
+    # Fail closed: a broken cap check must not let a second PR through.
+    $Capped = $true
+    Write-Host "Could not check agent PR status ($_). Failing closed - skipping contribution stages this run." -ForegroundColor Red
 }
 
 # --- Dry run -----------------------------------------------------------------
@@ -250,9 +254,19 @@ if (-not $BuildOk) {
     Log "Stage 1 + Stage 2 skipped. Fix once with: $AgentDir\setup-build.ps1" "Red"
 }
 
-if ($Capped -or -not $BuildOk) {
-    if ($Capped) { Log "Open-PR cap reached - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
-    else         { Log "Build gate failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+# gh auth gate: mining, Stage 1 issue search, and Stage 2 PR creation all need
+# an authenticated gh. If it's dead, skip the expensive stages loudly rather
+# than half-run them and produce confusing failures downstream.
+gh auth status 2>$null | Out-Null
+$GhOk = ($LASTEXITCODE -eq 0)
+if (-not $GhOk) {
+    Log "GH AUTH FAILED: gh is not authenticated. Stage 1 + Stage 2 skipped. Run: gh auth login" "Red"
+}
+
+if ($Capped -or -not $BuildOk -or -not $GhOk) {
+    if ($Capped)         { Log "Open-PR cap reached - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+    elseif (-not $BuildOk) { Log "Build gate failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+    else                 { Log "gh auth failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
 } else {
 
     # --- Stage 1.5: Pattern mining (weekly) ----------------------------------

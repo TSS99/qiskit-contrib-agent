@@ -32,7 +32,26 @@ if (Get-Command cargo -ErrorAction SilentlyContinue) {
     rustup default stable
 }
 
-Write-Host "== 2/3 Build qiskit (_accelerate) ==" -ForegroundColor Cyan
+Write-Host "== 2/4 C++ Build Tools (linker for the Rust extension) ==" -ForegroundColor Cyan
+# Building _accelerate needs the MSVC C++ toolchain (cl.exe / link.exe). Detect
+# it via vswhere; if absent, install VS Build Tools with the VCTools workload.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+$haveVc = $false
+if (Test-Path $vswhere) {
+    $vc = & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+    if ($vc) { $haveVc = $true }
+}
+if ($haveVc) {
+    Write-Host "MSVC C++ tools present." -ForegroundColor Green
+} else {
+    Write-Host "Installing VS Build Tools + C++ workload via winget (this is large)..." -ForegroundColor Yellow
+    winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
+        --accept-source-agreements --accept-package-agreements `
+        --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    Write-Host "If install opened a separate window, let it finish before the build step continues." -ForegroundColor DarkYellow
+}
+
+Write-Host "== 3/4 Build qiskit (_accelerate) ==" -ForegroundColor Cyan
 # Native commands print progress to stderr; don't let that abort under Stop.
 $ErrorActionPreference = "Continue"
 Push-Location $RepoPath
@@ -40,7 +59,7 @@ try {
     pip install -e .
 } finally { Pop-Location }
 
-Write-Host "== 3/3 Verify gate ==" -ForegroundColor Cyan
+Write-Host "== 4/4 Verify gate ==" -ForegroundColor Cyan
 Push-Location $RepoPath
 try {
     cargo --version
