@@ -215,8 +215,29 @@ if (Test-Path $FeedbackFile) {
 $MainOutput = ""
 $OpusOutput = ""
 
-if ($Capped) {
-    Log "Open-PR cap reached - skipping pattern mining, Stage 1 and Stage 2." "Yellow"
+# --- Build-readiness gate ----------------------------------------------------
+# Stage 1/2 need a Qiskit checkout that actually builds and imports. Without the
+# Rust _accelerate extension, `import qiskit` fails outright, so every candidate
+# is unreproducible and Codex correctly bails with NO SUBMISSION every run. Detect
+# that here and say so loudly instead of burning a Codex call to rediscover it.
+function Test-BuildReady([string]$Repo) {
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { return $false }
+    Push-Location $Repo
+    try {
+        python -c "import qiskit._accelerate" 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } finally { Pop-Location }
+}
+
+$BuildOk = Test-BuildReady $RepoPath
+if (-not $BuildOk) {
+    Log "BUILD GATE FAILED: cargo and/or qiskit._accelerate not importable in $RepoPath." "Red"
+    Log "Stage 1 + Stage 2 skipped. Fix once with: $AgentDir\setup-build.ps1" "Red"
+}
+
+if ($Capped -or -not $BuildOk) {
+    if ($Capped) { Log "Open-PR cap reached - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+    else         { Log "Build gate failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
 } else {
 
     # --- Stage 1.5: Pattern mining (weekly) ----------------------------------
