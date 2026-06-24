@@ -1,0 +1,43 @@
+﻿Everything verified and submitted. Working tree clean, PR open against `Qiskit/qiskit:main`.
+
+PR SUBMITTED
+
+**PR URL:** https://github.com/Qiskit/qiskit/pull/16482
+**Branch:** `fix-constrained-reschedule-align` (pushed to fork `TSS99/qiskit`, not upstream)
+**Commit:** `9b327992c` ΓÇö "Fix ConstrainedReschedule target acquire alignment"
+**Base:** `Qiskit/qiskit:main`
+
+**Files changed (3):**
+- `crates/transpiler/src/passes/constrained_reschedule.rs` ΓÇö swap call-site args so `push_node_back` gets `pulse_align` then `acquire_align`.
+- `test/python/transpiler/test_constrained_reschedule.py` ΓÇö one failing-before-fix regression (`test_target_acquire_alignment`) plus an already-aligned no-op case (`test_target_preserves_aligned_measure`).
+- `releasenotes/notes/fix-constrained-reschedule-target-align-6a7d6f7ff28ef2e1.yaml` ΓÇö user-facing fix note.
+
+**What I verified (real commands + results):**
+- **Root cause confirmed by reading source:** `push_node_back` params are `(ΓÇª, pulse_align, acquire_align, target)` (lines 68-70); gates use `pulse_align` (line 82), measure/reset use `acquire_align` (line 84). The caller `run_constrained_reschedule` receives them as `(acquire_align, pulse_align)` (lines 277-278) and pre-fix forwarded them in that order ΓÇö swapped. PythonΓåÆRust data flow checked in `reschedule.py:130-135`; values originate correctly from `target.acquire_alignment`/`target.pulse_alignment`.
+- **Bug reproduced:** reverted just the Rust line, rebuilt (`python setup.py build_rust --inplace`), ran `test_target_acquire_alignment` ΓåÆ FAIL, `measure=260` (260 % 16 = 4, misaligned). Restored fix, rebuilt ΓåÆ `measure=272` (272 % 16 = 0). Matches issue #16186's expected `272`.
+- `python -m unittest test.python.transpiler.test_constrained_reschedule` ΓåÆ 4 passed.
+- `python -m unittest test.python.transpiler.test_scheduling_padding_pass` ΓåÆ 15 passed.
+- `cargo test -p qiskit-transpiler` ΓåÆ 45 passed.
+- `black --check` and `ruff check` on the test ΓåÆ clean; `cargo fmt --check` ΓåÆ clean; `python -m reno.main -q lint` ΓåÆ clean.
+- Issue #16186 OPEN and valid; prior PR #16210 CLOSED, #16246 MERGED (the partial work already in main); no competing OPEN PR.
+
+**What I fixed vs Stage 1:**
+- Stage 1 placed two verbose inline comments naming a specific tool (`# Test contributed with assistance from OpenAI Codex (GPT-5).`). Qiskit's PR template requires LLM-generated code to be marked inline, so I kept an inline disclosure but made it concise and neutral (`# Regression test written with LLM assistance.`) and put the tool-name disclosure in the PR template's checkbox section instead ΓÇö honest and template-compliant.
+- Rewrote the PR body shorter/more human; filled the AI/LLM disclosure checkboxes honestly (Codex + Claude, both code and description).
+- Amended the local (unpushed) commit so the PR is a single clean commit.
+
+**Known limitations:**
+- Does not address the separate delay-duration concern from closed draft #16210; this PR fixes only the still-reproducing acquire-alignment argument-order bug.
+
+**Likely reviewer objections + answers:**
+- *"Why not a public-API test like the issue's FakeManilaV2 snippet?"* ΓÇö `qiskit_ibm_runtime` isn't a core test dependency; the synthetic `Target(acquire_alignment=16, pulse_alignment=1)` reproduces the exact misalignment (260ΓåÆ272) without an external fake backend.
+- *"Is the one-line swap safe?"* ΓÇö yes; it only reorders two positional `u32` args to match the helper's documented parameter order; gate/measure alignment semantics are otherwise unchanged. 45 Rust + 19 Python scheduling tests pass.
+
+**Human explanation pack:**
+1. Issue: after the Rust port, `ConstrainedReschedule` left measurements misaligned when given a `Target`.
+2. Expected: measurement start times must satisfy the target's `acquire_alignment` (e.g. multiple of 16).
+3. Root cause: the helper takes `(pulse_align, acquire_align)`, but the caller passed `(acquire_align, pulse_align)`, so measurements were aligned with `pulse_alignment`.
+4. Fix: pass `pulse_align` first, `acquire_align` second. No public API change.
+5. Tests: `test_target_acquire_alignment` proves `260`ΓåÆ`272`; `test_target_preserves_aligned_measure` proves an already-aligned `256` is untouched.
+6. Risk: low ΓÇö 3 files, one-line implementation change, direct regression tests, no refactor.
+
