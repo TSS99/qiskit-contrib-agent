@@ -12,6 +12,7 @@
       3. Stage 2 Opus verify + submit    - independent check, then push + PR.
       4. Ledger update (sonnet)          - record evaluated issues to skip later.
       5. Lesson curator (sonnet)         - merge + dedup + cap lessons.md.
+      5b. Merged-PR sync (gh)            - refresh merged-prs.md for advocate points.
       6. Backup push                     - commit artifacts to private repo.
 
 .PARAMETER RepoPath
@@ -49,6 +50,8 @@ $OpusModel  = "claude-opus-4-8"
 $MineMaxAgeDays = 7
 $MaxOpenPrs     = 3   # ceiling on concurrent open agent-created PRs
 $PrCadenceDays  = 7   # target: land at least one agent PR per this many days
+$AdvocateNumber = "126759"   # Qiskit Advocate # for the merged-PR points tracker
+$ContribGitHub  = "TSS99"    # GitHub handle whose merged Qiskit PRs are tracked
 
 # --- Validate ----------------------------------------------------------------
 
@@ -501,6 +504,60 @@ if ($Curated -and $Curated.Length -gt 10) {
     Log "lessons.md rewritten (curated)." "Green"
 } else {
     Log "Curator returned nothing usable - leaving lessons.md unchanged." "DarkYellow"
+}
+
+# --- Stage 5b: Merged-PR tracker sync (advocate points) ----------------------
+# Keep merged-prs.md in step with reality so the user can claim Qiskit Advocate
+# points. Rebuilds the table from gh (the source of truth for merge state) while
+# preserving the human-set [x] "claimed" ticks. Runs whenever gh is authenticated,
+# independent of the contribution cadence gate - merges can land any time.
+$MergedPrsFile = Join-Path $AgentDir "merged-prs.md"
+if ($GhOk) {
+    Log "Syncing merged-PR tracker (advocate #$AdvocateNumber)..." "Yellow"
+    $mergedJson = gh pr list --repo Qiskit/qiskit --author $ContribGitHub --state merged --limit 100 --json number,title,url,mergedAt 2>$null | Out-String
+    # PS5.1: ConvertFrom-Json emits a JSON array as one pipeline object, so assign
+    # first then re-wrap with @() for a correct element count (see header note).
+    try { $parsed = $mergedJson | ConvertFrom-Json; $merged = @($parsed) } catch { $merged = @() }
+    if ($merged.Count -gt 0) {
+        # Preserve which PR numbers the user already ticked as claimed.
+        $claimed = @{}
+        if (Test-Path $MergedPrsFile) {
+            foreach ($ln in (Get-Content $MergedPrsFile -Encoding UTF8)) {
+                $m = [regex]::Match($ln, '^\|\s*\[(x| )\]\s*\|\s*#(\d+)')
+                if ($m.Success) { $claimed[[int]$m.Groups[2].Value] = ($m.Groups[1].Value -eq 'x') }
+            }
+        }
+        $rows = $merged | Sort-Object { $_.mergedAt } | ForEach-Object {
+            $n = [int]$_.number
+            $tick = if ($claimed.ContainsKey($n) -and $claimed[$n]) { 'x' } else { ' ' }
+            $title = ($_.title -replace '\|', '\').Trim()
+            "| [$tick] | #$n | $($_.mergedAt.Substring(0,10)) | $title | $($_.url) |"
+        }
+        $today = Get-Date -Format "yyyy-MM-dd"
+        $content = @"
+# Qiskit Advocate - Merged PR Tracker
+
+**Advocate #:** $AdvocateNumber
+**GitHub:** $ContribGitHub
+**Repo:** Qiskit/qiskit
+**Purpose:** Track merged PRs to claim points in the Qiskit Advocate programme (Airtable form).
+
+How to use: when a PR merges it is added below with the Claimed box unticked [ ]. After you
+submit it in the advocate Airtable form, change [ ] to [x] so you know it is already claimed.
+
+| Claimed | PR | Merged | Title | Link |
+|:-------:|----|--------|-------|------|
+$($rows -join "`n")
+
+_Last updated: ${today}_
+"@
+        $content | Out-File -FilePath $MergedPrsFile -Encoding UTF8
+        Log "Merged-PR tracker synced ($($merged.Count) merged)." "Green"
+    } else {
+        Log "Merged-PR tracker: gh returned no merged PRs - leaving file unchanged." "DarkYellow"
+    }
+} else {
+    Log "gh auth failed - skipping merged-PR tracker sync." "Yellow"
 }
 
 # --- Stage 6: Backup push ----------------------------------------------------
