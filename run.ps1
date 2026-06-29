@@ -49,7 +49,7 @@ $CheapModel = "claude-sonnet-4-6"
 $OpusModel  = "claude-opus-4-8"
 $MineMaxAgeDays = 7
 $MaxOpenPrs     = 3   # ceiling on concurrent open agent-created PRs
-$PrCadenceDays  = 7   # target: land at least one agent PR per this many days
+$PrCadenceDays  = 1   # target: attempt an agent PR every day (ceiling still caps at $MaxOpenPrs)
 $AdvocateNumber = "126759"   # Qiskit Advocate # for the merged-PR points tracker
 $ContribGitHub  = "TSS99"    # GitHub handle whose merged Qiskit PRs are tracked
 

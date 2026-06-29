@@ -1,0 +1,44 @@
+﻿PR SUBMITTED
+
+**PR URL:** https://github.com/Qiskit/qiskit/pull/16493
+**Branch:** `fix-counts-mixed-width` (pushed to fork `origin` = TSS99/qiskit; PR opened against `Qiskit/qiskit:main`)
+**Commit:** `9a5f003f0 Fix mixed-width Counts formatting`
+**Title:** Fix Counts mixed-width formatting
+
+**Files changed**
+- `qiskit/result/counts.py` — infer/pad width in `Counts.__init__` for integer-like keys.
+- `test/python/result/test_counts.py` — regression + adjacent tests.
+- `test/python/result/test_result.py` — update `get_counts` no-header expectation.
+- `releasenotes/notes/fix-counts-mixed-width-1c6ba2a8a09d4291.yaml` — fix note.
+
+**What I verified (real commands + results)**
+- Remotes: `origin` = fork (TSS99), `upstream` = Qiskit/qiskit. Pushed to fork only.
+- Read the full source and traced the mechanism: setting `self.memory_slots` feeds `postprocess.format_counts` → `_pad_zeros`, which is what actually pads. Confirmed the fix path is correct.
+- **Bug reproduced on pre-fix code** (checked out `HEAD~1` of `counts.py`): `Counts({"0x0":50,"0x3":30})` → `{'0':50,'11':30}`, `marginal_counts(...,[0])` → unchanged `{'0':50,'11':30}`. Restored the fix afterward; tree clean.
+- **Fix confirmed:** same input → `{'00':50,'11':30}` + ambiguity warning; `marginal_counts` → `{'0':50,'1':30}`.
+- `python -m unittest test.python.result.test_counts test.python.result.test_result` → 85 passed.
+- `python -m pytest test/python/result/` → 147 passed; `test_bit_array` → 44 passed.
+- `black --check` and `ruff check` on the three changed files → pass. Release-note YAML parses (`fixes:`); `find_stray_release_notes.py` clean. (`reno lint` not installed locally — validated YAML structure manually.)
+- Checked `BitArray.from_counts`: it uses `int_outcomes()` (raw integer dict), which the padding does not touch, so BitArray's numeric output is unchanged — only a warning is emitted when a caller builds an ambiguous mixed-width `Counts`. No correctness regression.
+
+**What I fixed vs Stage 1:** Nothing in the code/tests — independent review found the diff minimal and correct. I trimmed the PR body to the short human format and set the AI disclosure honestly to "Claude Code" (Stage 1 had named a different tool; the actual tooling was Claude Code).
+
+**Competing-PR / issue check:** Issue #16190 is open and unassigned. All prior PRs (#16200, #16240, #16338, #16363) are closed. Critically, #16363 implemented this *exact* maintainer-endorsed approach and was closed only because that author had 9 LLM-spam PRs — not for code reasons. The maintainer (alexanderivrii) explicitly prescribed: fix in `Counts.__init__`, pad using `memory_slots`/`creg_sizes`, warn when ambiguous (warn, not raise, for backward compat). This PR matches that prescription. No active PR competes.
+
+**Known limitations**
+- Full repo suite not run (large). Targeted + adjacent suites pass.
+- This intentionally changes display behavior for ambiguous mixed-width integer-like inputs lacking metadata (e.g. `{"0x0":21,"0x2":12}` now `{"00":21,"10":12}`), emitting a `UserWarning`. This is the maintainer-requested trade-off.
+- The new warning surfaces wherever such ambiguous `Counts` are built (e.g. `Result.get_counts` on header-less mixed-width data, or a user constructing a mixed-width `Counts` before `BitArray.from_counts`).
+
+**Likely reviewer objections + answers**
+- *Why fix `Counts` and not `marginal_counts`?* — Per your own issue comment: the bad state is the mixed-width `Counts` object; fixing construction prevents all downstream consumers from receiving inconsistent keys.
+- *Is the warning too noisy?* — It only fires when widths actually differ and neither `memory_slots` nor `creg_sizes` is given; uniform-width and metadata-supplied inputs are unchanged.
+- *Not another LLM spam PR?* — Single focused PR, exactly the prescribed approach, with a reproducer, regression test, and release note; disclosure filled honestly.
+
+**Human explanation pack**
+- *Issue:* `Counts` accepts hex/int/`0b` keys and documents `memory_slots` as optional, but mixed-width keys without width metadata produced inconsistent-length bitstrings, so `marginal_counts` silently returned the unmarginalized counts.
+- *Expected behavior:* integer-like keys should share a consistent bit width before APIs operate on bit positions.
+- *Root cause:* `Counts.__init__` formatted integer-like keys with no known width, leaving smaller values unpadded.
+- *Fix:* when `memory_slots` is absent, use `creg_sizes` if present, else pad to the max observed width and warn about ambiguity; bitstring/dit inputs are untouched.
+- *Tests:* main regression proves `{"0x0":50,"0x3":30}` → `{"00":50,"11":30}` and `marginal_counts(...,[0])` → `{"0":50,"1":30}`; an adjacent test proves `creg_sizes` alone supplies the width.
+

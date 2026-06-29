@@ -10,3 +10,5 @@
 
 - 2026-06-24 | https://github.com/Qiskit/qiskit/issues/16186 | prepared | argument order swap fixes acquire alignment bug
 
+- 2026-06-29 | https://github.com/Qiskit/qiskit/issues/16190 | prepared | Fixed mixed-width Counts key normalization bug
+
