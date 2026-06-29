@@ -5,6 +5,9 @@
 .DESCRIPTION
     Pipeline per run:
       0. Feedback ingest (sonnet + gh)  - learn from real maintainer reactions.
+      R. PR revision (codex + opus)      - on open PRs with unaddressed reviewer
+                                           feedback, prepare + verify the change,
+                                           push, and post a short reply (gh+build).
       -  Open-PR cap guard               - if >=1 open PR, skip the expensive
                                            contribution stages entirely.
       1. Pattern mining (sonnet + gh)    - refresh merged-patterns.md weekly.
@@ -305,6 +308,108 @@ gh auth status 2>$null | Out-Null
 $GhOk = ($LASTEXITCODE -eq 0)
 if (-not $GhOk) {
     Log "GH AUTH FAILED: gh is not authenticated. Stage 1 + Stage 2 skipped. Run: gh auth login" "Red"
+}
+
+# --- Stage R: PR revision (respond to reviewer feedback on open PRs) ----------
+# Independent of the cadence/ceiling gate: addressing review feedback on PRs we
+# already opened is always in scope and opens no new PR. Needs gh (read threads,
+# push, reply) and a working build (run tests on the change). A PR is a candidate
+# when its newest human-maintainer review/comment is newer than our last pushed
+# commit (i.e. unaddressed). Codex (R1) prepares the change; Opus (R2) verifies,
+# pushes, and posts one short reply. Auto-push + auto-reply are by user choice;
+# reply tone is constrained in revise-verify-prompt.md.
+$ReviseFile       = Join-Path $AgentDir "revise-prompt.md"
+$ReviseVerifyFile = Join-Path $AgentDir "revise-verify-prompt.md"
+
+if ($GhOk -and $BuildOk -and (Test-Path $ReviseFile) -and (Test-Path $ReviseVerifyFile)) {
+    Log "Stage R: checking open PRs for unaddressed reviewer feedback..." "Cyan"
+    $isBot = { param($login) $login -match '(?i)\[bot\]$|coveralls|codecov|dependabot|github-actions|qiskit-bot' }
+    $reviseCandidates = @()
+    if (Test-Path $AgentPrsFile) {
+        $prUrls = @(
+            Get-Content $AgentPrsFile -Encoding UTF8 | ForEach-Object {
+                $m = [regex]::Match($_, "https?://github\.com/[^\s)]+/pull/\d+")
+                if ($m.Success) { $m.Value }
+            } | Select-Object -Unique
+        )
+        foreach ($u in $prUrls) {
+            $j = $null
+            try { $j = gh pr view $u --json state,author,reviews,comments,commits 2>$null | ConvertFrom-Json } catch { $j = $null }
+            if (-not $j -or $j.state -ne "OPEN") { continue }
+            $me = $j.author.login
+            $commitDates = @($j.commits | ForEach-Object { [datetime]$_.committedDate })
+            $lastCommit = if ($commitDates.Count) { ($commitDates | Sort-Object | Select-Object -Last 1) } else { [datetime]::MinValue }
+            $fbTimes = @()
+            foreach ($r in $j.reviews) {
+                if ($r.author.login -ne $me -and -not (& $isBot $r.author.login) -and ($r.state -eq "CHANGES_REQUESTED" -or $r.state -eq "COMMENTED") -and $r.submittedAt) {
+                    $fbTimes += [datetime]$r.submittedAt
+                }
+            }
+            foreach ($c in $j.comments) {
+                if ($c.author.login -ne $me -and -not (& $isBot $c.author.login) -and $c.createdAt) {
+                    $fbTimes += [datetime]$c.createdAt
+                }
+            }
+            if ($fbTimes.Count -eq 0) { continue }
+            $latestFb = ($fbTimes | Sort-Object | Select-Object -Last 1)
+            if ($latestFb -gt $lastCommit) { $reviseCandidates += $u }
+        }
+    }
+
+    if ($reviseCandidates.Count -eq 0) {
+        Log "No open PRs have unaddressed reviewer feedback - skipping revision." "Gray"
+    } else {
+        Log "PRs with unaddressed feedback: $($reviseCandidates -join ', ')" "Cyan"
+        $candidateList = ($reviseCandidates | ForEach-Object { "- $_" }) -join "`n"
+
+        # Stage R1: Codex prepares the requested changes (local commits only).
+        $reviseTemplate = Get-Content $ReviseFile -Raw -Encoding UTF8
+        $revisePrompt = $reviseTemplate.Replace("{{PR_LIST}}", $candidateList)
+        $revisePrompt | Out-File -FilePath (Join-Path $RunDir "revise-prompt-used.md") -Encoding UTF8
+        Log "Stage R1: Codex ($CodexModel, xhigh) preparing revisions..." "Cyan"
+        $ReviseOutFile = Join-Path $RunDir "revise-output.txt"
+        $revisePrompt | codex exec -m $CodexModel -c "model_reasoning_effort=`"xhigh`"" -s danger-full-access -C $RepoPath -o $ReviseOutFile
+        $ReviseExit = $LASTEXITCODE
+        $ReviseOutput = if (Test-Path $ReviseOutFile) { Get-Content $ReviseOutFile -Raw -Encoding UTF8 } else { "(no output)" }
+        if ($ReviseExit -eq 0) { Log "Stage R1 exited: 0" "Green" } else { Log "Stage R1 exited: $ReviseExit" "Red" }
+
+        if ($ReviseExit -eq 0 -and $ReviseOutput -match "READY_TO_VERIFY") {
+            # Rebuild in case a revision touched Rust/_accelerate before Opus tests.
+            Push-Location $RepoPath
+            try { pip install -e . 2>&1 | Out-Null } finally { Pop-Location }
+
+            Log "Stage R2: Opus ($OpusModel) verifying + pushing revisions..." "Cyan"
+            $rvTemplate = Get-Content $ReviseVerifyFile -Raw -Encoding UTF8
+            $rvPrompt = $rvTemplate.Replace("{{CODEX_HANDOFF}}", $ReviseOutput).Replace("{{PR_LIST}}", $candidateList)
+            $rvAllowed = @(
+                "Bash(git:*)", "Bash(gh:*)",
+                "Bash(python:*)", "Bash(python3:*)", "Bash(py:*)",
+                "Bash(pytest:*)", "Bash(stestr:*)", "Bash(tox:*)", "Bash(nox:*)",
+                "Bash(black:*)", "Bash(ruff:*)", "Bash(pylint:*)", "Bash(mypy:*)",
+                "Bash(pip:*)", "Bash(reno:*)", "Bash(cargo:*)", "Bash(maturin:*)",
+                "Read", "Edit", "Write", "Grep", "Glob"
+            ) -join " "
+            Push-Location $RepoPath
+            try {
+                $ReviseVerifyOut = $rvPrompt | claude -p --model $OpusModel --permission-mode default --allowedTools $rvAllowed --add-dir $RepoPath 2>&1 | Out-String
+            } finally { Pop-Location }
+            $ReviseVerifyOut | Out-File -FilePath (Join-Path $RunDir "revise-verify.txt") -Encoding UTF8
+            if ($ReviseVerifyOut -match "PUSHED_AND_REPLIED") {
+                Log "Stage R2: revision(s) pushed + reply posted." "Green"
+            } elseif ($ReviseVerifyOut -match "NOTHING_PUSHED") {
+                Log "Stage R2: Opus pushed nothing (see revise-verify.txt)." "Yellow"
+            } else {
+                Log "Stage R2: output unclear - review revise-verify.txt." "DarkYellow"
+            }
+        } else {
+            Log "Stage R1 prepared no revision - skipping Opus." "Gray"
+        }
+
+        # Leave the working tree on a clean base for the contribution stages.
+        git -C $RepoPath checkout main 2>&1 | Out-Null
+    }
+} else {
+    Log "Stage R skipped (needs gh auth + working build + revise prompts)." "Gray"
 }
 
 if (-not ($Escalate -and $BuildOk -and $GhOk)) {
