@@ -1,0 +1,69 @@
+DECISION: SUBMIT
+
+Branch: `fix-bitarray-empty-register-counts`  
+Commit: `29dffa348 Fix BitArray empty register counts`  
+Proposed PR title: `Fix BitArray empty register counts`  
+PR opened: no, per Stage 1 instructions.
+
+**Candidate Outcome**
+Shortlist checked:
+- `#16490` VF2Layout nondeterminism: rejected. Both issue reproducers were stable on rebuilt current `main`.
+- `#16460` Optimize1qGatesDecomposition target errors: rejected. Maintainer requested a clearer reproducer; expected behavior not settled.
+- `#12062` BitArray empty classical register counts: strong. Open, unassigned, no open PR found, maintainer-confirmed expected behavior, reproduced on current `main`.
+
+**Files Changed**
+- `qiskit/primitives/containers/bit_array.py`: fixes zero-bit flattening, bitstring conversion, and explicit `num_bits=0` sample construction.
+- `test/python/primitives/containers/test_bit_array.py`: adds regression coverage for zero-bit counts, bitstrings, `from_counts`, and `from_samples`.
+- `releasenotes/notes/fix-bitarray-empty-register-counts-b4d7a6f915ac2d31.yaml`: user-facing fix note.
+
+**Proposed PR Body**
+```markdown
+## Summary
+
+Fix `BitArray` conversions for empty classical registers so zero-bit shot data preserves shot counts instead of raising.
+
+## Details
+
+Fix #12062. `BitArray` already accepts zero-bit arrays, but the count and bitstring helpers used a reshape form that fails for zero-byte rows, and sample construction could not build explicit zero-bit rows. This uses the known shot count when flattening, handles explicit zero-bit samples, and keeps zero-bit bitstring keys as `""`.
+
+## Tests
+
+- `python -m unittest test.python.primitives.containers.test_bit_array`
+- `python -m unittest discover -s test\python\primitives\containers -p "test_*.py"`
+- `python -m black --check qiskit\primitives\containers\bit_array.py test\python\primitives\containers\test_bit_array.py`
+- `python -m ruff check qiskit\primitives\containers\bit_array.py test\python\primitives\containers\test_bit_array.py`
+
+### AI/LLM disclosure
+
+- [ ] I didn't use LLM tooling, or only used it privately.
+- [x] I used the following tool to help write this PR description: OpenAI Codex (GPT-5)
+- [x] I used the following tool to generate or modify code: OpenAI Codex (GPT-5)
+```
+
+**Validation**
+- Reproducer on unpatched `main`: failed as required with `ValueError` for `get_counts`, `get_int_counts`, `from_samples([0], num_bits=0)`, and `from_samples([""], num_bits=0)`.
+- Reproducer after fix: passed.
+- `python -m unittest test.python.primitives.containers.test_bit_array`: passed, 45 tests.
+- `python -m unittest discover -s test\python\primitives\containers -p "test_*.py"`: passed, 278 tests.
+- `python -m black --check ...`: passed.
+- `python -m ruff check ...`: passed.
+- `python tools\find_stray_release_notes.py`: passed.
+- YAML parse check for release note: passed.
+- `git diff --cached --check`: passed.
+- `reno`: not run; `reno` executable is not installed and `python -m reno` is unsupported in this environment.
+
+**Human Explanation Pack**
+Issue: `BitArray` could store zero-bit shot data, but public conversion methods crashed on it.
+
+Expected behavior: an empty classical register still has shots, so counts should preserve shot multiplicity as `{"": shots}` or `{0: shots}`.
+
+Root cause: the code flattened shots with `reshape(-1, 0)`, which NumPy cannot infer. String conversion also used `bin(0).zfill(0)`, which returns `"0"` instead of `""`.
+
+Fix: flatten using the known `self.size * self.num_shots` count. For explicit `num_bits=0` samples, build an empty `(shots, 0)` byte array after validating values fit into zero bytes.
+
+Tests: `test_empty_register_counts` proves counts and bitstrings preserve shots for zero-bit registers. Constructor tests prove `from_counts` and `from_samples` can produce zero-bit `BitArray` values.
+
+Likely reviewer question: why not return `{}`?  
+Answer: maintainer discussion says the counts values should still sum to total shots, even for an empty register.
+
+Known limitation: this focuses on the reported public count/bitstring/sample paths, not a full audit of every `BitArray` method with `num_bits=0`.

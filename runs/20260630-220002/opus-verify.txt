@@ -1,0 +1,35 @@
+﻿## Assessment complete.
+
+I verified the fix is **technically correct and actually more complete than Stage 1 realized** ΓÇö but I found a blocking issue that Stage 1 got factually wrong.
+
+### What I verified (real commands, real output)
+
+- **Bug reproduces on original code**: `reshape(-1, 0)` ΓåÆ `ValueError: cannot reshape array of size 0`; `bin(0)[2:].zfill(0)` ΓåÆ `"0"` (not `""`); `int("", 2)` ΓåÆ `ValueError`. All three failure paths confirmed.
+- **Fix works end-to-end**: zero-bit `get_counts()` ΓåÆ `{"": 6}`, `get_int_counts()` ΓåÆ `{0: 6}`, `get_bitstrings()` ΓåÆ `["",...]`, `from_counts({"":5}, num_bits=0)`, `from_samples([0,0], num_bits=0)`, `from_samples(["",""], num_bits=0)` all behave correctly. Overflow guard (`val.to_bytes(0,"big")`) correctly rejects non-zero values into 0 bits.
+- **Logic review**: `reshape(self.size * self.num_shots, shape[-1])` is mathematically identical to the old `-1` form (since `size = prod(shape[:-2])`, total rows = `size*num_shots`) and only differs by working when `num_bytes == 0`. Sound.
+- **Tests**: `python -m unittest test.python.primitives.containers.test_bit_array` ΓåÆ **45 passed**.
+- **black --check** ΓåÆ unchanged; **ruff** ΓåÆ all checks passed.
+- **Expected behavior** independently confirmed from the issue thread: maintainer `garrison` explicitly says counts must still sum to total shots for an empty register (so `{"": shots}`, not `{}`). Stage 1's fix matches this.
+
+### The blocker
+
+Stage 1's report states: *"no open PR found."* **This is false.**
+
+- **PR #12317 ΓÇö "Update BitArray.get_counts() to support zero classical registers"** is **OPEN, not a draft**, authored by community contributor `atharva-satpute`, and explicitly targets the same issue #12062 (its release note references #12062).
+- It is dormant since 2024-07-26 (~23 months) and is *incomplete* ΓÇö it only fixes `get_counts`/`get_bitstrings`, not `from_samples`/`from_counts` (which `ihincks` flagged as needed). Our fix is strictly more complete.
+- **But** the last comment is from maintainer `t-imamichi`: *"The discussion has suspended for months. Could you restart itΓÇª It would be nice to fix the issue."* ΓÇö i.e., the maintainers' stated preference is to **revive the existing PR**, not have it replaced.
+
+Per the reputation-critical standing rules, the final gate requires **"no competing active PR."** There is an open PR on the exact issue, authored by another contributor, that a maintainer asked to revive. Silently opening a duplicate PR is an outward-facing, hard-to-reverse action that risks being seen as poaching another contributor's work and would likely be closed as a duplicate. I will not push or open a PR.
+
+I pushed nothing and opened nothing. The branch/commit remain local and untouched.
+
+### What to do instead (human decision)
+The fix itself is good and worth landing. The right next step is communication, not a duplicate PR ΓÇö e.g. comment on issue #12062 / PR #12317 offering to take over the stale PR or contribute the additional `from_samples`/`from_counts` coverage, and get a maintainer's go-ahead before opening a fresh PR. If a maintainer confirms #12317 is abandoned and welcomes a new PR, this commit is ready to submit as-is.
+
+### Lesson for retry
+Always run `gh pr list --search "<issue#>"` (and search by feature keywords) before trusting a "no open PR" claim ΓÇö Stage 1's shortlist check missed an open, linked PR.
+
+NO SUBMISSION RECOMMENDED
+
+Blocking reason: a competing open PR (#12317) exists for issue #12062, dormant but not closed, authored by another contributor, with a maintainer explicitly requesting it be revived rather than replaced. Opening a duplicate violates the "no competing active PR" gate and the reputation-critical rules. The fix is correct and more complete than #12317, so the defensible path is to communicate on the existing PR/issue and obtain maintainer sign-off before submitting.
+
