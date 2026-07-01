@@ -16,3 +16,5 @@
 - 2026-06-30 | https://github.com/Qiskit/qiskit/issues/16460 | reject | Maintainer requested clearer reproducer; behavior unsettled
 - 2026-06-30 | https://github.com/Qiskit/qiskit/issues/12062 | prepared | Open, unassigned, reproduced, maintainer-confirmed fix
 
+- 2026-07-01 | Not logged in ┬╖ Please run /login
+
