@@ -1,1 +1,20 @@
-﻿Not logged in ┬╖ Please run /login
+﻿- [FEEDBACK]: Cap simultaneous open PRs to 1-2 at a time; jakelishman bulk-closed ~5 PRs on 2026-05-04 citing "too much volume" and explicitly said the review cost exceeded the benefit for each one.
+- [FEEDBACK]: Keep PR descriptions to brief-summary + detailed-comments + LLM-attribution; alexanderivrii objected that "Problem", "Tests", and "Validation" subsections are unnecessary since CI and the diff already show that information.
+- [FEEDBACK]: Identify which architectural layer owns the bug before fixing it; jakelishman closed PR 16062 because the exporter-side fix was wrong since "the root fault is not in the exporter but in the importer."
+- [FEEDBACK]: If a maintainer opens an alternative fix for the same issue, close your PR immediately and defer; Cryoris opened PR 16153 as "the more efficient solution" and ShellyGarion closed PR 16124 the same day as superseded.
+- [FEEDBACK]: Never add overhead to the happy path to improve error messages; jakelishman rejected a NaN scan on all matrices saying it "causes an extra cost to all matrices to catch a specific case that's incredibly rare"; attach diagnostic context only on the error path.
+- [FEEDBACK]: Treat visualization and test-infrastructure PRs as highest-risk for closure without review; ShellyGarion warned against volume in PR 16059 before jakelishman's bulk sweep disproportionately hit those categories.
+- [SELECTION]: Prefer issues where the expected behavior is derivable directly from the specification or mathematical definition, not from maintainer judgment calls.
+- [SELECTION]: Avoid performance-oriented issues with large reproducers and no clear minimal fix; the effort-to-merge ratio is too high.
+- [SELECTION]: Avoid issues explicitly marked low-priority by maintainer comments even if the bug is real and reproducible.
+- [SELECTION]: Before committing to a fix, confirm the bug reproduces on current upstream/main and that no competing PR exists; search by issue number, affected symbol name, and error keyword.
+- [TECHNICAL]: When fixing an edge case in one code path, audit adjacent code paths in the same function for the same edge case before submitting.
+- [TECHNICAL]: Prove the regression test fails on the unpatched base commit, then passes after the fix; document both results in the run output.
+- [TECHNICAL]: Verify fix correctness by computing actual operator output (e.g. Operator == -I), not just by asserting no exception.
+- [TECHNICAL]: For ESOP-based synthesis, treat the all-dash (zero-control) clause as a tautology: phase oracles emit global_phase += pi; bit-flip oracles apply X to the output qubit unconditionally.
+- [TECHNICAL]: Run ruff, black --check, reno lint, and git diff --check before staging; do not rely on CI to catch style failures.
+- [TECHNICAL]: Include a release note for every user-visible bug fix; use reno to generate and lint it before commit.
+- [PRSTYLE]: Use Qiskit's two-section PR format: "Summary" (one imperative sentence + issue link) and "Details" (root cause + fix rationale); omit Problem/Tests/Validation headers entirely.
+- [PRSTYLE]: Fill the LLM disclosure checkbox honestly and specifically ΓÇö name which tool generated code vs. which wrote the description; do not leave it unchecked when LLM tooling was used.
+- [PRSTYLE]: Push a single clean commit whose parent is an ancestor of upstream/main; squash any intermediate commits before opening the PR.
+- [PRSTYLE]: Anticipate the top two or three reviewer objections and answer them in the PR body before they are asked.

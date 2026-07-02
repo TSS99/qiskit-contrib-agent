@@ -17,4 +17,4 @@ submit it in the advocate Airtable form, change [ ] to [x] so you know it is alr
 | [ ] | #16151 | 2026-05-27 | Fix ConstrainedReschedule barrier handling | https://github.com/Qiskit/qiskit/pull/16151 |
 | [ ] | #16309 | 2026-06-05 | Fix BitArray bitcount padding handling | https://github.com/Qiskit/qiskit/pull/16309 |
 
-_Last updated: 2026-07-01_
+_Last updated: 2026-07-02_

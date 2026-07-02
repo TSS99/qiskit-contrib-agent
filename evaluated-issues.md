@@ -18,3 +18,7 @@
 
 - 2026-07-01 | Not logged in ┬╖ Please run /login
 
+- 2026-07-02 | https://github.com/Qiskit/qiskit/issues/16524 | prepared | open unassigned reproducible with clear expected behavior
+- 2026-07-02 | https://github.com/Qiskit/qiskit/issues/16520 | reject | performance-oriented large reproducer unclear small fix
+- 2026-07-02 | https://github.com/Qiskit/qiskit/issues/16269 | reject | low priority per maintainer fuzzing-adjacent invalid-input panic
+
