@@ -5,6 +5,15 @@ CORRECT and actually addresses what the maintainer asked, then - only if it does
 - push it and post one short reply. Be skeptical; Codex can be wrong or can
 over/under-shoot the request.
 
+Harness rules (headless run - permission prompts cannot be answered, so a
+blocked command is pure wasted turns):
+- Never create temp files inside the repo (they cannot be deleted afterwards).
+  Write scratch scripts and comment bodies with the Write tool to
+  C:\Users\Tilock\AppData\Local\Temp\qiskit-agent\ and use them from there.
+- One operation per Bash call: no `cd X && ...` chains (use `git -C <path>`),
+  no output redirection, no heredocs, no `... | python -c` pipelines (use
+  `gh --jq`), no multi-line `python -c` (write a script file instead).
+
 PRs in scope:
 {{PR_LIST}}
 

@@ -1,0 +1,10 @@
+PR: https://github.com/Qiskit/qiskit/pull/16530
+REVIEWER ASKED: Use explicit length checks for empty `clause_data`, and shorten the release note while linking issue #16524.
+DECISION: REVISED
+BRANCH: fix-tautological-oracle-synthesis
+CHANGED: `qiskit/synthesis/boolean/boolean_expression_synth.py`, `releasenotes/notes/fix-tautological-boolean-oracles-68d5f80f9bdff3cb.yaml`
+TESTS: `black qiskit/synthesis/boolean/boolean_expression_synth.py` PASS; `ruff check qiskit/synthesis/boolean/boolean_expression_synth.py` PASS; `python -m reno.main lint` PASS; `python -m unittest test.python.circuit.library.test_phase_and_bitflip_oracles -v` PASS
+SUGGESTED REPLY: Updated the empty-clause checks to use explicit length comparisons and shortened the release note with the `#16524` link. The focused oracle tests, ruff, and reno lint pass locally.
+NOTES: Created local commit `e3d8d03f0` (`Address oracle synthesis review comments`). Did not push or comment.
+
+READY_TO_VERIFY

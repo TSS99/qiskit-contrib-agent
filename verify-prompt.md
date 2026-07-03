@@ -8,6 +8,17 @@ only then push to the fork and open the PR.
 
 You have full tool access (git, gh, file edit, run tests) in this repository.
 
+Harness rules (headless run - permission prompts cannot be answered, so a
+blocked command is pure wasted turns):
+- Never create temp files inside the repo (they cannot be deleted afterwards).
+  Write scratch verification scripts and the PR body with the Write tool to
+  C:\Users\Tilock\AppData\Local\Temp\qiskit-agent\ and use them from there,
+  e.g. `gh pr create --body-file C:\Users\Tilock\AppData\Local\Temp\qiskit-agent\pr_body.md`.
+  No cleanup needed there.
+- One operation per Bash call: no `cd X && ...` chains (use `git -C <path>`),
+  no output redirection, no heredocs, no `... | python -c` pipelines (use
+  `gh --jq`), no multi-line `python -c` (write a script file instead).
+
 Stage 1's final handoff report:
 ---
 {{CODEX_HANDOFF}}

@@ -1,9 +1,11 @@
-﻿- [FEEDBACK]: Cap simultaneous open PRs to 1-2 at a time; jakelishman bulk-closed ~5 PRs on 2026-05-04 citing "too much volume" and explicitly said the review cost exceeded the benefit for each one.
+- [FEEDBACK]: Cap simultaneous open PRs to 1-2 at a time; jakelishman bulk-closed ~5 PRs on 2026-05-04 citing "too much volume" and explicitly said the review cost exceeded the benefit for each one.
 - [FEEDBACK]: Keep PR descriptions to brief-summary + detailed-comments + LLM-attribution; alexanderivrii objected that "Problem", "Tests", and "Validation" subsections are unnecessary since CI and the diff already show that information.
 - [FEEDBACK]: Identify which architectural layer owns the bug before fixing it; jakelishman closed PR 16062 because the exporter-side fix was wrong since "the root fault is not in the exporter but in the importer."
 - [FEEDBACK]: If a maintainer opens an alternative fix for the same issue, close your PR immediately and defer; Cryoris opened PR 16153 as "the more efficient solution" and ShellyGarion closed PR 16124 the same day as superseded.
 - [FEEDBACK]: Never add overhead to the happy path to improve error messages; jakelishman rejected a NaN scan on all matrices saying it "causes an extra cost to all matrices to catch a specific case that's incredibly rare"; attach diagnostic context only on the error path.
 - [FEEDBACK]: Treat visualization and test-infrastructure PRs as highest-risk for closure without review; ShellyGarion warned against volume in PR 16059 before jakelishman's bulk sweep disproportionately hit those categories.
+- [FEEDBACK]: Use `if len(x) == 0:` rather than `if not x:` for container emptiness checks; Cryoris objected to the falsy form on PR 16530, noting it "can easily backfire (and did in the past) and doesn't clearly show what check is happening."
+- [FEEDBACK]: Cross-reference the fixed issue number inside the release note body itself; ShellyGarion explicitly asked for this before PR 16309 was approved, and Cryoris echoed the same expectation on PR 16530 ("we link to the issue that this fixes").
 - [SELECTION]: Prefer issues where the expected behavior is derivable directly from the specification or mathematical definition, not from maintainer judgment calls.
 - [SELECTION]: Avoid performance-oriented issues with large reproducers and no clear minimal fix; the effort-to-merge ratio is too high.
 - [SELECTION]: Avoid issues explicitly marked low-priority by maintainer comments even if the bug is real and reproducible.

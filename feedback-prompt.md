@@ -5,6 +5,13 @@ not self-reflection.
 
 Use the `gh` CLI. Do not change any code. Do not open or comment on anything.
 
+Command hygiene (headless run - blocked commands just waste turns):
+- One command per Bash call: no `&&` chains, no output redirection, and never
+  pipe gh output to `python -c` - use gh's built-in `--jq` flag for filtering.
+- Valid `gh pr view --json` fields include: state,title,body,author,reviews,
+  comments,commits,files,mergedAt,closedAt,url,number. There is no
+  `closedByPullRequest` field.
+
 Steps:
 
 1. List TSS99's recent PRs and their outcomes:

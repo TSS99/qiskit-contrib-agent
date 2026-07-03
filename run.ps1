@@ -242,6 +242,18 @@ function Log([string]$Msg, [string]$Color = "White") {
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Msg" -ForegroundColor $Color
 }
 
+# PS 5.1 Out-File -Encoding UTF8 writes a BOM, which has leaked into assembled
+# prompts and broken Edit-tool string matches in headless stages. Use this for
+# any file whose contents get re-read into a prompt or edited by a model.
+function Write-Utf8NoBom([string]$Path, [string]$Content) {
+    [IO.File]::WriteAllText($Path, $Content + "`n", [Text.UTF8Encoding]::new($false))
+}
+
+# Scratch area the headless stages are told to use for temp files (verify
+# scripts, PR bodies) instead of polluting the repo, where cleanup gets blocked.
+$AgentTempDir = Join-Path $env:LOCALAPPDATA "Temp\qiskit-agent"
+New-Item -ItemType Directory -Force -Path $AgentTempDir | Out-Null
+
 # Run claude headless, capture stdout. $Tools = "" means no tools needed.
 function Invoke-Claude {
     param([string]$Prompt, [string]$Model, [string]$Tools = "", [string]$WorkDir = $AgentDir)
@@ -259,11 +271,29 @@ function Invoke-Claude {
 
 $ExistingLessons = Get-FileOrDefault $LessonsFile "(none yet)"
 
+# --- claude health gate --------------------------------------------------------
+# Every learning/verify stage runs headless `claude -p`; an expired login makes
+# each one fail silently with "Not logged in" (both learning stages were lost
+# this way on 2026-07-01). Probe once, retry once, gate all claude stages on it.
+function Test-ClaudeReady {
+    $out = "Reply with exactly: PONG" | claude -p --model $CheapModel 2>&1 | Out-String
+    return (($LASTEXITCODE -eq 0) -and ($out -match "PONG"))
+}
+$ClaudeOk = Test-ClaudeReady
+if (-not $ClaudeOk) {
+    Log "claude probe failed - retrying once in 15s..." "DarkYellow"
+    Start-Sleep -Seconds 15
+    $ClaudeOk = Test-ClaudeReady
+}
+if (-not $ClaudeOk) {
+    Log "CLAUDE HEALTH FAILED: 'claude -p' probe did not return PONG. All claude stages skipped this run. Fix with: claude (then /login)" "Red"
+}
+
 # --- Stage 0: Feedback ingest (always) ---------------------------------------
 
 Log "Stage 0: ingesting real maintainer feedback..." "Cyan"
 $FeedbackLessons = ""
-if (Test-Path $FeedbackFile) {
+if ($ClaudeOk -and (Test-Path $FeedbackFile)) {
     $fbTemplate = Get-Content $FeedbackFile -Raw -Encoding UTF8
     $fbPrompt = $fbTemplate.Replace("{{EXISTING_LESSONS}}", $ExistingLessons)
     $FeedbackOut = Invoke-Claude -Prompt $fbPrompt -Model $CheapModel -Tools "Bash(gh:*)"
@@ -274,6 +304,8 @@ if (Test-Path $FeedbackFile) {
         $FeedbackLessons = $FeedbackOut.Trim()
         Log "Feedback lessons captured." "Green"
     }
+} elseif (-not $ClaudeOk) {
+    Log "claude unavailable - skipping feedback ingest." "Yellow"
 } else {
     Log "feedback-prompt.md missing - skipping feedback ingest." "DarkYellow"
 }
@@ -321,7 +353,7 @@ if (-not $GhOk) {
 $ReviseFile       = Join-Path $AgentDir "revise-prompt.md"
 $ReviseVerifyFile = Join-Path $AgentDir "revise-verify-prompt.md"
 
-if ($GhOk -and $BuildOk -and (Test-Path $ReviseFile) -and (Test-Path $ReviseVerifyFile)) {
+if ($GhOk -and $BuildOk -and $ClaudeOk -and (Test-Path $ReviseFile) -and (Test-Path $ReviseVerifyFile)) {
     Log "Stage R: checking open PRs for unaddressed reviewer feedback..." "Cyan"
     $isBot = { param($login) $login -match '(?i)\[bot\]$|coveralls|codecov|dependabot|github-actions|qiskit-bot' }
     $reviseCandidates = @()
@@ -409,12 +441,13 @@ if ($GhOk -and $BuildOk -and (Test-Path $ReviseFile) -and (Test-Path $ReviseVeri
         git -C $RepoPath checkout main 2>&1 | Out-Null
     }
 } else {
-    Log "Stage R skipped (needs gh auth + working build + revise prompts)." "Gray"
+    Log "Stage R skipped (needs gh auth + working build + working claude + revise prompts)." "Gray"
 }
 
-if (-not ($Escalate -and $BuildOk -and $GhOk)) {
+if (-not ($Escalate -and $BuildOk -and $GhOk -and $ClaudeOk)) {
     if (-not $BuildOk)       { Log "Build gate failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
     elseif (-not $GhOk)      { Log "gh auth failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+    elseif (-not $ClaudeOk)  { Log "claude unavailable - skipping pattern mining, Stage 1 and Stage 2 (no verifier)." "Yellow" }
     elseif ($Capped)         { Log "At concurrency ceiling ($OpenCount/$MaxOpenPrs open) - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
     elseif (-not $WeeklyDue) { Log "No PR due yet (last agent PR < $PrCadenceDays days ago) - skipping pattern mining, Stage 1 and Stage 2." "Gray" }
     else                     { Log "Skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
@@ -433,9 +466,21 @@ if (-not ($Escalate -and $BuildOk -and $GhOk)) {
         $currentPatterns = Get-FileOrDefault $PatternsFile "(none yet)"
         $mineTemplate = Get-Content $MineFile -Raw -Encoding UTF8
         $minePrompt = $mineTemplate.Replace("{{CURRENT_PATTERNS}}", $currentPatterns)
-        $MineOut = Invoke-Claude -Prompt $minePrompt -Model $CheapModel -Tools "Bash(gh:*) Read Write Edit"
+        $MineOut = Invoke-Claude -Prompt $minePrompt -Model $CheapModel -Tools "Bash(gh:*) Read"
         $MineOut | Out-File -FilePath (Join-Path $RunDir "mining.md") -Encoding UTF8
-        Log "Pattern mining done." "Green"
+        # The stage runs headless and cannot write inside ~\.claude\ itself (the
+        # harness treats it as a sensitive path and the permission prompt is
+        # unanswerable), so apply its stdout here - same pattern as the curator.
+        # The prompt requires the contents to start at the exact header below;
+        # anything before it (preamble/tool chatter) is discarded, and a missing
+        # header means the stage failed, so the old file is kept.
+        $mineIdx = $MineOut.IndexOf("# What Actually Gets Merged")
+        if ($mineIdx -ge 0) {
+            Write-Utf8NoBom $PatternsFile $MineOut.Substring($mineIdx).Trim()
+            Log "Pattern mining done - merged-patterns.md updated." "Green"
+        } else {
+            Log "Mining output lacked the required header - merged-patterns.md left unchanged (see runs\$Timestamp\mining.md)." "DarkYellow"
+        }
     } else {
         Log "Patterns fresh (< $MineMaxAgeDays days) - skipping mining." "Gray"
     }
@@ -603,12 +648,16 @@ $transcriptForCurate
 ---
 "@
 
-$Curated = (Invoke-Claude -Prompt $curatePrompt -Model $CheapModel).Trim()
-if ($Curated -and $Curated.Length -gt 10) {
-    $Curated | Out-File -FilePath $LessonsFile -Encoding UTF8
-    Log "lessons.md rewritten (curated)." "Green"
+if ($ClaudeOk) {
+    $Curated = (Invoke-Claude -Prompt $curatePrompt -Model $CheapModel).Trim()
+    if ($Curated -and $Curated.Length -gt 10) {
+        Write-Utf8NoBom $LessonsFile $Curated
+        Log "lessons.md rewritten (curated)." "Green"
+    } else {
+        Log "Curator returned nothing usable - leaving lessons.md unchanged." "DarkYellow"
+    }
 } else {
-    Log "Curator returned nothing usable - leaving lessons.md unchanged." "DarkYellow"
+    Log "claude unavailable - skipping lesson curation." "Yellow"
 }
 
 # --- Stage 5b: Merged-PR tracker sync (advocate points) ----------------------
@@ -665,6 +714,32 @@ _Last updated: ${today}_
     Log "gh auth failed - skipping merged-PR tracker sync." "Yellow"
 }
 
+# --- Heartbeat -----------------------------------------------------------------
+# Written every run and pushed with the backup, so a stale timestamp or FAILURE
+# status is visible at a glance (8 nights once failed silently before this).
+$Stage2Result = "not run"
+if ($OpusOutput) {
+    if ($OpusOutput -match "PR SUBMITTED") {
+        $hbUrl = ([regex]::Match($OpusOutput, "https?://github\.com/[^\s)]+/pull/\d+")).Value
+        $Stage2Result = "PR SUBMITTED $hbUrl"
+    } elseif ($OpusOutput -match "NO SUBMISSION RECOMMENDED") {
+        $Stage2Result = "NO SUBMISSION RECOMMENDED"
+    } else {
+        $Stage2Result = "UNCLEAR - review opus-verify.txt"
+    }
+}
+$Healthy = $BuildOk -and $GhOk -and $ClaudeOk -and ($Stage2Result -notmatch "UNCLEAR")
+$HeartbeatText = @"
+# Agent heartbeat
+
+Status: $(if ($Healthy) { "OK" } else { "FAILURE - check runs\$Timestamp" })
+Run: $Timestamp
+Gates: build=$BuildOk gh=$GhOk claude=$ClaudeOk capped=$Capped prDue=$WeeklyDue openPRs=$OpenCount/$MaxOpenPrs
+Stage 2: $Stage2Result
+"@
+Write-Utf8NoBom (Join-Path $AgentDir "HEARTBEAT.md") $HeartbeatText
+if (-not $Healthy) { Log "RUN UNHEALTHY - see HEARTBEAT.md and $RunDir" "Red" }
+
 # --- Stage 6: Backup push ----------------------------------------------------
 
 Log "Committing run artifacts to backup repo..." "Yellow"
@@ -680,3 +755,6 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Log "Done. Artifacts: $RunDir" "Cyan"
+
+# Non-zero exit makes the failure visible in Task Scheduler's Last Run Result.
+if (-not $Healthy) { exit 1 }

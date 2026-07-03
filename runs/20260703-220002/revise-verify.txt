@@ -1,0 +1,7 @@
+﻿PR: https://github.com/Qiskit/qiskit/pull/16530
+PUSHED: yes
+REPLY: Switched the empty-clause guards in synth_phase_oracle_from_esop and synth_bit_oracle_from_esop to len(clause_data) == 0, and trimmed the release note to link #16524. Oracle tests pass.
+WHY: R1's commit e3d8d03f0 exactly matches both review nits ΓÇö `not clause_data` ΓåÆ `len(clause_data) == 0` (applied consistently to both esop functions) and a shortened release note linking #16524; pure refactor + doc, no Rust; black/ruff/reno lint and all 24 oracle tests pass locally.
+
+PUSHED_AND_REPLIED
+
