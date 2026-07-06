@@ -1,0 +1,9 @@
+﻿Done. All five review points verified before pushing.
+
+PR: https://github.com/Qiskit/qiskit/pull/16493
+PUSHED: yes
+REPLY: Removed the redundant bin_data guard and added the explanatory comment for the derived memory_slots in Counts.__init__, documented that behavior in the memory_slots docstring, linked #16190 in the release note, and inlined the warning assertions in test_counts.py. counts/result tests pass.
+WHY: Confirmed each of Cryoris's five inline asks was addressed exactly ΓÇö `not bin_data` guard removed (redundant since `self.int_raw` is always falsy when `bin_data` is truthy), `memory_slots` derivation documented in its arg docstring plus an inline comment, #16190 (the issue the PR fixes) linked in the release note, and the `_assert_mixed_width_warning` helper inlined across all tests. No scope creep; `test_counts`/`test_result` (85 tests) pass, black/ruff/reno clean.
+
+PUSHED_AND_REPLIED
+

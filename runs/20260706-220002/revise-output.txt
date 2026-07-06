@@ -1,0 +1,10 @@
+PR: https://github.com/Qiskit/qiskit/pull/16493
+REVIEWER ASKED: Remove the redundant `bin_data` guard, document and comment the derived `memory_slots` behavior, link the fixed issue in the release note, and inline the warning assertion helper.
+DECISION: REVISED
+BRANCH: fix-counts-mixed-width
+CHANGED: qiskit/result/counts.py, releasenotes/notes/fix-counts-mixed-width-1c6ba2a8a09d4291.yaml, test/python/result/test_counts.py
+TESTS: `black qiskit/result/counts.py test/python/result/test_counts.py test/python/result/test_result.py` PASS; `ruff check qiskit/result/counts.py test/python/result/test_counts.py test/python/result/test_result.py` PASS; `python -m reno.main lint` PASS; `python -m unittest test.python.result.test_counts test.python.result.test_result -v` PASS
+SUGGESTED REPLY: I documented the derived `memory_slots` behavior, added the explanatory comment, removed the redundant `bin_data` guard, linked #16190 in the release note, and inlined the warning assertions in the Counts tests.
+NOTES: Created local commit `c6ff4736e` (`Address Counts review comments`) and did not push or comment.
+
+READY_TO_VERIFY

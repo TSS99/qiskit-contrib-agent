@@ -1,0 +1,6 @@
+﻿I have enough data to extract the new signals. The only new maintainer feedback (today, 2026-07-06) comes from Cryoris's inline review on PR 16493. PR 16530 got an APPROVE from Cryoris (existing lessons confirmed); PRs 16482, 16162, 16258 have no new maintainer comments; bloqade-circuit 800/801 were closed with zero comments, providing no grounded signal.
+
+- [FEEDBACK]: When a fix makes a previously-required parameter auto-derivable from user input, document the new derivation rule in the parameter's docstring; Cryoris asked on PR 16493 "I'm fine setting memory_slots derived from the user input, but then we need to document this behavior. The docstring of memory_slots would be the right place for this."
+- [FEEDBACK]: Add a brief inline comment when code non-obviously infers or derives a value rather than receiving it directly; Cryoris asked on PR 16493 "Could we add a brief comment explaining that we're attempting to derive the memory slots here in case they weren't set?"
+- [FEEDBACK]: Avoid extracting a single-line test helper whose only purpose is saving keystrokes at the call site; Cryoris flagged this on PR 16493 as unnecessary indirection: "this function adds an indirection for typing 10 fewer characters ΓÇö IMO it's easier to read if you just have the full expression since you don't have to scroll up to check what [it] actually does."
+
