@@ -1,0 +1,3 @@
+﻿- [FEEDBACK]: Write release notes in 1-2 sentences maximum; Cryoris commented on PR 16530 that "Renos can really be brief" and condensed the note to a single-sentence fix description plus the issue cross-reference ΓÇö nothing more.
+- [FEEDBACK]: When a crash originates from invalid input accepted at object construction time (e.g., NaN gate parameters), maintainers may judge input validation at definition time to be the correct fix rather than improved error handling downstream; alexanderivrii said on PR 16258 "the error comes from defining an illegal 'u' gate in the first place, not from trying to transpile a circuit with such a gate."
+
