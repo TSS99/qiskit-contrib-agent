@@ -8,8 +8,9 @@
       R. PR revision (codex + opus)      - on open PRs with unaddressed reviewer
                                            feedback, prepare + verify the change,
                                            push, and post a short reply (gh+build).
-      -  Open-PR cap guard               - if >=1 open PR, skip the expensive
-                                           contribution stages entirely.
+      -  Weekly batch guard              - max 3 PRs opened per rolling 7 days;
+                                           any >7-day-old open PR freezes new PRs
+                                           until merged or closed.
       1. Pattern mining (sonnet + gh)    - refresh merged-patterns.md weekly.
       2. Stage 1 Codex prepare (xhigh)   - local branch + commit only.
       3. Stage 2 Opus verify + submit    - independent check, then push + PR.
@@ -51,8 +52,9 @@ $CodexModel = "gpt-5.5"
 $CheapModel = "claude-sonnet-4-6"
 $OpusModel  = "claude-opus-4-8"
 $MineMaxAgeDays = 7
-$MaxOpenPrs     = 3   # ceiling on concurrent open agent-created PRs
-$PrCadenceDays  = 1   # target: attempt an agent PR every day (ceiling still caps at $MaxOpenPrs)
+$MaxPrsPerWeek   = 3   # hard cap on PRs OPENED in any rolling $BatchWindowDays-day window
+$BatchWindowDays = 7   # window size; an OPEN agent PR older than this freezes all new PRs
+$PrCadenceDays   = 1   # at most one agent PR attempt per day
 $AdvocateNumber = "126759"   # Qiskit Advocate # for the merged-PR points tracker
 $ContribGitHub  = "TSS99"    # GitHub handle whose merged Qiskit PRs are tracked
 
@@ -120,18 +122,22 @@ $ledger
     return $OpenPrBlock + $patternsBlock + $lessonsBlock + $ledgerBlock + $base
 }
 
-# --- PR cadence + concurrency guard ------------------------------------------
-# Policy (user-set): land at least one agent PR every $PrCadenceDays days, even
-# if earlier ones are still unmerged, up to a ceiling of $MaxOpenPrs concurrently
-# open. Legacy pre-existing PRs do not count; only agent PRs in agent-prs.md.
-# Stage 1/2 run only when a PR is DUE and we are UNDER the ceiling ($Escalate).
-# The correctness floor (reproducer fails on main + tests pass) is enforced in
-# the Stage 1 prompt - a week may still be skipped if nothing clears it.
+# --- PR cadence + weekly batch guard ------------------------------------------
+# Policy (user-set 2026-07-14, replaces the 3-concurrently-open ceiling): open at
+# most $MaxPrsPerWeek agent PRs in any rolling $BatchWindowDays-day window, at
+# most one per day. If ANY agent PR opened more than $BatchWindowDays days ago is
+# still open, the previous batch is unresolved - open NOTHING new until every one
+# of them is merged or closed (either counts as done). Legacy pre-existing PRs do
+# not count; only agent PRs in agent-prs.md. The correctness floor (reproducer
+# fails on main + tests pass) is enforced in the Stage 1 prompt - a night may
+# still be skipped if nothing clears it.
 $OpenPrBlock = ""
-$Capped    = $false   # at ceiling or unsafe to submit -> skip Stage 1/2
-$Escalate  = $false   # PR due and under ceiling       -> push Stage 1 to land one
+$Capped    = $false   # batch limit / stale freeze / unsafe -> skip Stage 1/2
+$Escalate  = $false   # PR due and batch has room           -> push Stage 1 to land one
 $WeeklyDue = $false
 $OpenCount = 0
+$OpenedInWindow = 0
+$StalePrs  = @()
 
 # Fail-safe: a prior run that opened a PR but could not parse its URL drops this
 # flag so we hold. Clear it manually once you've confirmed PR state.
@@ -152,42 +158,58 @@ if (-not $Capped) {
   try {
     $openUrls = @()
     $lastPrDate = $null
+    $now = Get-Date
     if (Test-Path $AgentPrsFile) {
-        $lines = Get-Content $AgentPrsFile -Encoding UTF8
-        foreach ($ln in $lines) {
+        # Each agent-prs.md line carries "- yyyy-MM-dd | <url>"; pair them so the
+        # window count and stale check use each PR's own opened date.
+        $tracked = @{}
+        foreach ($ln in (Get-Content $AgentPrsFile -Encoding UTF8)) {
+            $um = [regex]::Match($ln, "https?://github\.com/[^\s)]+/pull/\d+")
+            if (-not $um.Success) { continue }
             $dm = [regex]::Match($ln, "\d{4}-\d{2}-\d{2}")
-            if ($dm.Success) {
-                $d = [datetime]::ParseExact($dm.Value, "yyyy-MM-dd", $null)
-                if (-not $lastPrDate -or $d -gt $lastPrDate) { $lastPrDate = $d }
-            }
+            # No date on the line = unknown age; fail closed by treating it as old.
+            $d = if ($dm.Success) { [datetime]::ParseExact($dm.Value, "yyyy-MM-dd", $null) } else { [datetime]::MinValue }
+            if (-not $tracked.ContainsKey($um.Value) -or $d -lt $tracked[$um.Value]) { $tracked[$um.Value] = $d }
+            if (-not $lastPrDate -or $d -gt $lastPrDate) { $lastPrDate = $d }
         }
-        $trackedUrls = @(
-            $lines | ForEach-Object {
-                $m = [regex]::Match($_, "https?://github\.com/[^\s)]+/pull/\d+")
-                if ($m.Success) { $m.Value }
-            } | Select-Object -Unique
-        )
-        foreach ($u in $trackedUrls) {
+        foreach ($u in $tracked.Keys) {
+            $ageDays = ($now - $tracked[$u]).TotalDays
+            if ($ageDays -lt $BatchWindowDays) { $OpenedInWindow++ }
             $st = (gh pr view $u --json state 2>$null | ConvertFrom-Json).state
             # Fail closed: undeterminable state (gh auth/network) counts as open.
-            if (-not $st -or $st -eq "OPEN") { $openUrls += $u }
+            if (-not $st -or $st -eq "OPEN") {
+                $openUrls += $u
+                if ($ageDays -ge $BatchWindowDays) { $StalePrs += $u }
+            }
         }
     }
     $OpenCount = $openUrls.Count
     $WeeklyDue = (-not $lastPrDate) -or
-                 ((New-TimeSpan -Start $lastPrDate -End (Get-Date)).TotalDays -ge $PrCadenceDays)
+                 ((New-TimeSpan -Start $lastPrDate -End $now).TotalDays -ge $PrCadenceDays)
 
-    if ($OpenCount -ge $MaxOpenPrs) {
+    if ($StalePrs.Count -gt 0) {
         $Capped = $true
-        $list = ($openUrls | ForEach-Object { "- $_" }) -join "`n"
+        $list = ($StalePrs | ForEach-Object { "- $_" }) -join "`n"
         $OpenPrBlock = @"
-## HARD CONSTRAINT - CONCURRENT PR CEILING ($MaxOpenPrs)
+## HARD CONSTRAINT - PREVIOUS BATCH UNRESOLVED
 
-$MaxOpenPrs agent PRs are already open:
+These agent PRs are more than $BatchWindowDays days old and still open:
 $list
 
-Do not open another until one merges or closes. End with NO SUBMISSION
-RECOMMENDED, citing the concurrency ceiling.
+Until every one of them is merged or closed, open no new PR. End with
+NO SUBMISSION RECOMMENDED, citing the unresolved batch.
+
+---
+
+"@
+    } elseif ($OpenedInWindow -ge $MaxPrsPerWeek) {
+        $Capped = $true
+        $OpenPrBlock = @"
+## HARD CONSTRAINT - WEEKLY BATCH LIMIT ($MaxPrsPerWeek per $BatchWindowDays days)
+
+$OpenedInWindow agent PRs were already opened in the last $BatchWindowDays days.
+Open no new PR. End with NO SUBMISSION RECOMMENDED, citing the weekly batch
+limit.
 
 ---
 
@@ -195,18 +217,19 @@ RECOMMENDED, citing the concurrency ceiling.
     } elseif ($WeeklyDue) {
         $Escalate = $true
         $OpenPrBlock = @"
-## WEEKLY TARGET DUE - LAND ONE PR THIS RUN (floor still applies)
+## PR TARGET DUE - LAND ONE PR THIS RUN (floor still applies)
 
-It has been at least $PrCadenceDays days since the last agent PR (or there is
-none yet), and $OpenCount of $MaxOpenPrs agent PRs are open, so you MAY open one
-more. Actively search, pick the single best available candidate, prepare it, and
-hand off with DECISION: SUBMIT.
+The previous batch is fully resolved, $OpenedInWindow of $MaxPrsPerWeek batch
+slots are used in the current $BatchWindowDays-day window, and no PR was opened
+in the last $PrCadenceDays day(s), so you MAY open one more. Actively search,
+pick the single best available candidate, prepare it, and hand off with
+DECISION: SUBMIT.
 
 Correctness floor - do NOT breach it to hit the target:
 - the reproducer MUST fail on unpatched current main, and
 - your added/changed tests MUST pass after the fix.
 If after honest effort nothing clears this floor, end with NO SUBMISSION
-RECOMMENDED. A missed week is acceptable; a junk PR is not. Bias toward narrow
+RECOMMENDED. A missed night is acceptable; a junk PR is not. Bias toward narrow
 transpiler/primitives bugs per the merge patterns above.
 
 ---
@@ -312,6 +335,7 @@ if ($ClaudeOk -and (Test-Path $FeedbackFile)) {
 
 $MainOutput = ""
 $OpusOutput = ""
+$SubmittedPrUrl = ""
 
 # --- Build-readiness gate ----------------------------------------------------
 # Stage 1/2 need a Qiskit checkout that actually builds and imports. Without the
@@ -352,11 +376,29 @@ if (-not $GhOk) {
 # reply tone is constrained in revise-verify-prompt.md.
 $ReviseFile       = Join-Path $AgentDir "revise-prompt.md"
 $ReviseVerifyFile = Join-Path $AgentDir "revise-verify-prompt.md"
+$ReviseStateFile  = Join-Path $AgentDir "revise-attempts.md"
+$RepoOnMain   = $true
+$StageRResult = "not run"
 
 if ($GhOk -and $BuildOk -and $ClaudeOk -and (Test-Path $ReviseFile) -and (Test-Path $ReviseVerifyFile)) {
     Log "Stage R: checking open PRs for unaddressed reviewer feedback..." "Cyan"
     $isBot = { param($login) $login -match '(?i)\[bot\]$|coveralls|codecov|dependabot|github-actions|qiskit-bot' }
     $reviseCandidates = @()
+    $candidateFb = @{}
+    # One honest attempt per feedback event. Comment-only feedback (a question, a
+    # drive-by remark) never produces a push, so the "newest feedback > last
+    # commit" test alone would re-trigger a full Codex+Opus run on the same PR
+    # every night forever. After Stage R1 evaluates a PR, the newest-feedback
+    # timestamp it saw is recorded here and that exact feedback is never re-run.
+    $attempted = @{}
+    if (Test-Path $ReviseStateFile) {
+        foreach ($ln in (Get-Content $ReviseStateFile -Encoding UTF8)) {
+            $p = $ln -split '\s*\|\s*'
+            if ($p.Count -ge 2 -and $p[0] -match '^https?://') {
+                try { $attempted[$p[0]] = [datetime]::Parse($p[1], [Globalization.CultureInfo]::InvariantCulture) } catch {}
+            }
+        }
+    }
     if (Test-Path $AgentPrsFile) {
         $prUrls = @(
             Get-Content $AgentPrsFile -Encoding UTF8 | ForEach-Object {
@@ -377,19 +419,30 @@ if ($GhOk -and $BuildOk -and $ClaudeOk -and (Test-Path $ReviseFile) -and (Test-P
                     $fbTimes += [datetime]$r.submittedAt
                 }
             }
+            $ownTimes = @()
             foreach ($c in $j.comments) {
-                if ($c.author.login -ne $me -and -not (& $isBot $c.author.login) -and $c.createdAt) {
+                if ($c.author.login -eq $me -and $c.createdAt) {
+                    $ownTimes += [datetime]$c.createdAt
+                } elseif ($c.author.login -ne $me -and -not (& $isBot $c.author.login) -and $c.createdAt) {
                     $fbTimes += [datetime]$c.createdAt
                 }
             }
             if ($fbTimes.Count -eq 0) { continue }
             $latestFb = ($fbTimes | Sort-Object | Select-Object -Last 1)
-            if ($latestFb -gt $lastCommit) { $reviseCandidates += $u }
+            # Addressed = we pushed a commit OR replied ourselves since that feedback.
+            $lastOwn = if ($ownTimes.Count) { ($ownTimes | Sort-Object | Select-Object -Last 1) } else { [datetime]::MinValue }
+            $lastAddressed = if ($lastCommit -gt $lastOwn) { $lastCommit } else { $lastOwn }
+            if ($latestFb -le $lastAddressed) { continue }
+            # Already evaluated this exact feedback on a previous night - don't loop.
+            if ($attempted.ContainsKey($u) -and $attempted[$u] -ge $latestFb) { continue }
+            $reviseCandidates += $u
+            $candidateFb[$u] = $latestFb
         }
     }
 
     if ($reviseCandidates.Count -eq 0) {
         Log "No open PRs have unaddressed reviewer feedback - skipping revision." "Gray"
+        $StageRResult = "no unaddressed feedback"
     } else {
         Log "PRs with unaddressed feedback: $($reviseCandidates -join ', ')" "Cyan"
         $candidateList = ($reviseCandidates | ForEach-Object { "- $_" }) -join "`n"
@@ -403,12 +456,29 @@ if ($GhOk -and $BuildOk -and $ClaudeOk -and (Test-Path $ReviseFile) -and (Test-P
         $revisePrompt | codex exec -m $CodexModel -c "model_reasoning_effort=`"xhigh`"" -s danger-full-access -C $RepoPath -o $ReviseOutFile
         $ReviseExit = $LASTEXITCODE
         $ReviseOutput = if (Test-Path $ReviseOutFile) { Get-Content $ReviseOutFile -Raw -Encoding UTF8 } else { "(no output)" }
-        if ($ReviseExit -eq 0) { Log "Stage R1 exited: 0" "Green" } else { Log "Stage R1 exited: $ReviseExit" "Red" }
+        if ($ReviseExit -eq 0) {
+            Log "Stage R1 exited: 0" "Green"
+            # R1 genuinely evaluated the feedback - record it so the same feedback
+            # event is never re-run, even if nothing gets pushed (see $attempted).
+            foreach ($u in $reviseCandidates) { $attempted[$u] = $candidateFb[$u] }
+            $stateLines = @($attempted.GetEnumerator() | Sort-Object Key | ForEach-Object {
+                "$($_.Key) | $($_.Value.ToString('o'))"
+            })
+            Write-Utf8NoBom $ReviseStateFile ($stateLines -join "`n")
+        } else {
+            Log "Stage R1 exited: $ReviseExit" "Red"
+            $StageRResult = "R1 FAILED exit $ReviseExit"
+        }
 
+        $ReviseRebuilt = $false
         if ($ReviseExit -eq 0 -and $ReviseOutput -match "READY_TO_VERIFY") {
             # Rebuild in case a revision touched Rust/_accelerate before Opus tests.
             Push-Location $RepoPath
             try { pip install -e . 2>&1 | Out-Null } finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) {
+                Log "Rebuild reported a non-zero exit - Opus will run against a possibly stale extension." "DarkYellow"
+            }
+            $ReviseRebuilt = $true
 
             Log "Stage R2: Opus ($OpusModel) verifying + pushing revisions..." "Cyan"
             $rvTemplate = Get-Content $ReviseVerifyFile -Raw -Encoding UTF8
@@ -428,31 +498,55 @@ if ($GhOk -and $BuildOk -and $ClaudeOk -and (Test-Path $ReviseFile) -and (Test-P
             $ReviseVerifyOut | Out-File -FilePath (Join-Path $RunDir "revise-verify.txt") -Encoding UTF8
             if ($ReviseVerifyOut -match "PUSHED_AND_REPLIED") {
                 Log "Stage R2: revision(s) pushed + reply posted." "Green"
+                $StageRResult = "PUSHED_AND_REPLIED"
             } elseif ($ReviseVerifyOut -match "NOTHING_PUSHED") {
                 Log "Stage R2: Opus pushed nothing (see revise-verify.txt)." "Yellow"
+                $StageRResult = "NOTHING_PUSHED"
             } else {
                 Log "Stage R2: output unclear - review revise-verify.txt." "DarkYellow"
+                $StageRResult = "UNCLEAR - review revise-verify.txt"
             }
-        } else {
+        } elseif ($ReviseExit -eq 0) {
             Log "Stage R1 prepared no revision - skipping Opus." "Gray"
+            $StageRResult = "nothing to revise"
         }
 
         # Leave the working tree on a clean base for the contribution stages.
         git -C $RepoPath checkout main 2>&1 | Out-Null
+        # A dirty tree Codex left behind makes checkout fail silently, and Stage 1
+        # would then commit its new fix on top of a PR branch. Verify, don't hope.
+        $curBranch = (git -C $RepoPath branch --show-current 2>$null | Out-String).Trim()
+        if ($curBranch -ne "main") {
+            $RepoOnMain = $false
+            Log "Repo stuck on '$curBranch' after Stage R (dirty tree?) - contribution stages will be skipped." "Red"
+        }
+
+        # The rebuild above compiled _accelerate against a PR branch. Back on main
+        # that extension no longer matches the Python source, so `import qiskit`
+        # fails and the build gate blocks every later run. Rebuild against main.
+        if ($ReviseRebuilt) {
+            Log "Rebuilding qiskit._accelerate against main after Stage R..." "Cyan"
+            Push-Location $RepoPath
+            try { pip install -e . 2>&1 | Out-Null } finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) {
+                Log "Rebuild against main FAILED - build gate will block future runs until fixed." "Red"
+            }
+        }
     }
 } else {
     Log "Stage R skipped (needs gh auth + working build + working claude + revise prompts)." "Gray"
 }
 
-if (-not ($Escalate -and $BuildOk -and $GhOk -and $ClaudeOk)) {
+if (-not ($Escalate -and $BuildOk -and $GhOk -and $ClaudeOk -and $RepoOnMain)) {
     if (-not $BuildOk)       { Log "Build gate failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
     elseif (-not $GhOk)      { Log "gh auth failed - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
     elseif (-not $ClaudeOk)  { Log "claude unavailable - skipping pattern mining, Stage 1 and Stage 2 (no verifier)." "Yellow" }
-    elseif ($Capped)         { Log "At concurrency ceiling ($OpenCount/$MaxOpenPrs open) - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
+    elseif (-not $RepoOnMain){ Log "Repo not on main after Stage R - skipping pattern mining, Stage 1 and Stage 2." "Red" }
+    elseif ($Capped)         { Log "Batch guard: capped (stale open: $($StalePrs.Count), opened last ${BatchWindowDays}d: $OpenedInWindow/$MaxPrsPerWeek) - skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
     elseif (-not $WeeklyDue) { Log "No PR due yet (last agent PR < $PrCadenceDays days ago) - skipping pattern mining, Stage 1 and Stage 2." "Gray" }
     else                     { Log "Skipping pattern mining, Stage 1 and Stage 2." "Yellow" }
 } else {
-    Log "PR due and under ceiling ($OpenCount/$MaxOpenPrs open) - running contribution stages." "Cyan"
+    Log "PR due, batch resolved and under weekly limit ($OpenedInWindow/$MaxPrsPerWeek opened last ${BatchWindowDays}d) - running contribution stages." "Cyan"
 
     # --- Stage 1.5: Pattern mining (weekly) ----------------------------------
 
@@ -562,11 +656,17 @@ if (-not ($Escalate -and $BuildOk -and $GhOk -and $ClaudeOk)) {
         $OpusOutput | Out-File -FilePath (Join-Path $RunDir "opus-verify.txt") -Encoding UTF8
 
         if ($OpusOutput -match "PR SUBMITTED") {
-            $prUrl = ([regex]::Match($OpusOutput, "https?://github\.com/[^\s)]+/pull/\d+")).Value
+            # verify-prompt.md tells Opus to print the URL AFTER the "PR SUBMITTED"
+            # marker. Searching the whole transcript would grab the first PR URL
+            # mentioned anywhere (e.g. a similar PR Opus cited) and track the
+            # wrong one - poisoning the cap count and Stage R's watch list.
+            $tail = $OpusOutput.Substring($OpusOutput.LastIndexOf("PR SUBMITTED"))
+            $prUrl = ([regex]::Match($tail, "https?://github\.com/[^\s)]+/pull/\d+")).Value
+            $SubmittedPrUrl = $prUrl
             if ($prUrl) {
                 $today = Get-Date -Format "yyyy-MM-dd"
                 if (-not (Test-Path $AgentPrsFile)) {
-                    "# Agent-created PRs (one-at-a-time cap counts these)`n" | Out-File -FilePath $AgentPrsFile -Encoding UTF8
+                    "# Agent-created PRs (weekly batch guard counts these)`n" | Out-File -FilePath $AgentPrsFile -Encoding UTF8
                 }
                 "- $today | $prUrl" | Out-File -FilePath $AgentPrsFile -Append -Encoding UTF8
                 Log "Stage 2: Opus submitted the PR. Tracked: $prUrl" "Green"
@@ -590,10 +690,11 @@ if (-not ($Escalate -and $BuildOk -and $GhOk -and $ClaudeOk)) {
 From the contribution transcript below, list every GitHub issue that was
 evaluated as a candidate, one per line, in this exact format:
 
-<issue-url> | <reject|prepared> | <=10-word reason
+<issue-url> | <reject|prepared> | score=<total>/20 or score=n/a | <=10-word reason
 
-Only output those lines. No headers, no commentary. If no issues were evaluated,
-output exactly: NONE
+Use the candidate's reported quality score total (I+M+R+G) if the transcript
+scored it; otherwise use score=n/a. Only output those lines. No headers, no
+commentary. If no issues were evaluated, output exactly: NONE
 
 Transcript:
 ---
@@ -720,21 +821,23 @@ _Last updated: ${today}_
 $Stage2Result = "not run"
 if ($OpusOutput) {
     if ($OpusOutput -match "PR SUBMITTED") {
-        $hbUrl = ([regex]::Match($OpusOutput, "https?://github\.com/[^\s)]+/pull/\d+")).Value
-        $Stage2Result = "PR SUBMITTED $hbUrl"
+        $Stage2Result = "PR SUBMITTED $SubmittedPrUrl"
     } elseif ($OpusOutput -match "NO SUBMISSION RECOMMENDED") {
         $Stage2Result = "NO SUBMISSION RECOMMENDED"
     } else {
         $Stage2Result = "UNCLEAR - review opus-verify.txt"
     }
 }
-$Healthy = $BuildOk -and $GhOk -and $ClaudeOk -and ($Stage2Result -notmatch "UNCLEAR")
+$Healthy = $BuildOk -and $GhOk -and $ClaudeOk -and $RepoOnMain -and
+           ($Stage2Result -notmatch "UNCLEAR") -and
+           ($StageRResult -notmatch "FAILED|UNCLEAR")
 $HeartbeatText = @"
 # Agent heartbeat
 
 Status: $(if ($Healthy) { "OK" } else { "FAILURE - check runs\$Timestamp" })
 Run: $Timestamp
-Gates: build=$BuildOk gh=$GhOk claude=$ClaudeOk capped=$Capped prDue=$WeeklyDue openPRs=$OpenCount/$MaxOpenPrs
+Gates: build=$BuildOk gh=$GhOk claude=$ClaudeOk repoOnMain=$RepoOnMain capped=$Capped prDue=$WeeklyDue open=$OpenCount stale=$($StalePrs.Count) opened${BatchWindowDays}d=$OpenedInWindow/$MaxPrsPerWeek
+Stage R: $StageRResult
 Stage 2: $Stage2Result
 "@
 Write-Utf8NoBom (Join-Path $AgentDir "HEARTBEAT.md") $HeartbeatText

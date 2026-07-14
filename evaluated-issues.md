@@ -1,4 +1,6 @@
 ﻿# Evaluated issues (skip re-evaluating rejected ones)
+# Format from 2026-07-14: <issue-url> | <reject|prepared> | score=<total>/20 or n/a | reason
+# (entries before that date predate quality scoring and have no score field)
 
 - 2026-06-15 | https://github.com/Qiskit/qiskit/issues/16377 | reject | open PR #16402 already addresses it
 - 2026-06-15 | https://github.com/Qiskit/qiskit/issues/16271 | reject | open PR #16362 already addresses it

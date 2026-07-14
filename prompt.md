@@ -126,6 +126,9 @@ Prefer:
 - issue not assigned
 - issue not already under active PR
 - issue not involved in design debate
+- higher real-world impact over purely cosmetic/rare edge cases (see
+  Candidate scoring rubric below) — a safe fix that fixes nothing anyone
+  hits is not preferable to a slightly bigger fix that does
 
 Avoid:
 - "good first issue" unless explicitly confirmed suitable
@@ -140,7 +143,41 @@ Avoid:
 - issues where a test would need private implementation details
 - issues where expected mathematical behavior is not fully verified
 
-Build a shortlist of at most 3 candidates.
+Candidate pool breadth:
+Do not stop at the first few plausible issues. Screen at least 8-10 open,
+unassigned issues spanning at least 3 different subsystems (e.g. transpiler
+passes, quantum-info, primitives, circuit construction, synthesis,
+pulse/scheduling) before narrowing to a shortlist of at most 3. A wider pool
+produces a better final pick than settling for the first adequate one.
+
+Candidate scoring rubric:
+Score every shortlisted candidate on four axes, 1 (worst) to 5 (best):
+
+- Impact (I): does this fix something that affects real/common usage, or is
+  it cosmetic/a rare edge case nobody hits in practice? 1 = trivial string,
+  padding, or message-wording nit. 5 = a correctness bug in a commonly used
+  code path (a common transpiler pass, a common primitive, common circuit
+  construction/synthesis). Prefer candidates that matter over candidates
+  that are merely safe.
+- Merge-confidence (M): how strong is the evidence a maintainer actually
+  wants this fixed? 1 = no engagement, ambiguous, or active design debate.
+  5 = explicit maintainer confirmation, unassigned, no competing PR, no
+  disagreement about expected behavior.
+- Risk (R): technical + reviewer-burden risk, inverted so higher is safer.
+  1 = large/ambiguous diff, uncertain fix area, high reviewer burden. 5 =
+  small, narrowly scoped diff, low reviewer burden.
+- Rigor-readiness (G): how well can expected behavior be independently
+  verified before writing code? 1 = relies on untested intuition. 5 =
+  verified against docs, existing tests, or mathematical/spec ground truth.
+
+Report I/M/R/G and the total (sum, max 20) for every candidate.
+
+Approval threshold: a candidate clears the bar only if total >= 14 AND every
+individual axis >= 3 AND Impact >= 3. A candidate that is safe but trivial
+(high R/M, Impact <= 2) does not clear the bar merely for being low-risk —
+prefer waiting for a better issue over shipping a cosmetic fix. Among
+candidates that clear the threshold, choose the single highest total score;
+break ties by higher Impact.
 
 For each candidate, report:
 - repository
@@ -158,7 +195,10 @@ For each candidate, report:
 - reviewer burden estimate: low / medium / high
 - technical risk: low / medium / high
 - whether this is appropriate for me to take
-- final candidate verdict: reject / maybe / strong
+- quality score: I=_ M=_ R=_ G=_ total=_/20
+- final candidate verdict: reject (total<11, Impact<=2, or any axis<=1) /
+  maybe (total 11-13, or a borderline axis needs more digging) / strong
+  (clears the approval threshold above)
 
 If no candidate is strong, stop with:
 
@@ -175,6 +215,8 @@ Choose exactly one candidate only if:
 - technical risk is low
 - issue is not already being handled
 - I can plausibly explain the domain behavior myself
+- quality score clears the approval threshold (total >= 14, every axis >= 3,
+  Impact >= 3)
 
 If any of these fail, stop.
 

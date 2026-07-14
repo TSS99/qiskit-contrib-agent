@@ -31,14 +31,18 @@ Codex (gpt-5.5, xhigh reasoning). Backs up every run + learned lessons here.
    reproduce its bug on main with passing tests.
 2. **Pattern mining** (Sonnet + gh, weekly) — studies recently merged upstream
    PRs and rewrites `merged-patterns.md` so issue selection follows what works.
-3. **Stage 1 — Codex prepares** (gpt-5.5, xhigh) — picks a candidate guided by
-   the patterns + lessons + ledger, makes one local commit on a branch, does
-   NOT push or open a PR; hands off a structured report.
+3. **Stage 1 — Codex prepares** (gpt-5.5, xhigh) — screens a broad pool of
+   candidates (8-10+ issues across 3+ subsystems), scores each on a 4-axis
+   quality rubric (Impact / Merge-confidence / Risk / Rigor-readiness, see
+   `prompt.md`), and picks the highest-scoring candidate that clears the
+   threshold — favoring real-world impact over merely-safe trivia. Guided by
+   the patterns + lessons + ledger. Makes one local commit on a branch, does
+   NOT push or open a PR; hands off a structured report including the score.
 4. **Stage 2 — Opus verifies + submits** (Opus 4.8, scoped tools) — independently
    verifies correctness, fixes what it must, re-runs tests, then pushes to the
    fork and opens the PR. Blocks if unfixable.
-5. **Ledger update** (Sonnet) — records which issues were evaluated and the
-   verdict, so future runs skip known rejects.
+5. **Ledger update** (Sonnet) — records which issues were evaluated, their
+   verdict and quality score, so future runs skip known rejects.
 6. **Lesson curator** (Sonnet) — merges feedback + run lessons into `lessons.md`,
    deduped, tagged (FEEDBACK/SELECTION/TECHNICAL/PRSTYLE), capped at 30.
 7. **Backup** — all artifacts committed and pushed here.

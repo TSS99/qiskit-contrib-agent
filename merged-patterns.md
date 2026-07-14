@@ -65,3 +65,13 @@ Prefer an open, confirmed, narrow **bug** in the transpiler or primitives with a
 clear reproducer and an obvious release-note-able fix. If the best candidate is
 docs, visualization, circuit-cutting, or a behavior the maintainers may consider
 intended — that is a NO SUBMISSION signal, not a candidate.
+
+**Impact weighting (2026-07-14):** safety alone is not sufficient. Weigh
+candidates on the four-axis quality rubric in `prompt.md` (Impact,
+Merge-confidence, Risk, Rigor-readiness) and prefer the highest-scoring
+candidate that clears the threshold there, not just the first narrow/safe one
+found. A trivial cosmetic edge case (low Impact) should lose to a correctness
+bug in a commonly used code path (high Impact) even if the cosmetic fix is
+marginally safer — provided the higher-impact candidate still clears every
+other gate in `prompt.md`. Do not chase Impact by taking on design debates,
+broad refactors, or anything else the avoid-list already rules out.

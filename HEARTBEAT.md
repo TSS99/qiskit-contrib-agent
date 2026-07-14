@@ -1,6 +1,7 @@
 # Agent heartbeat
 
-Status: FAILURE - check runs\20260713-220002
-Run: 20260713-220002
-Gates: build=False gh=True claude=True capped=False prDue=True openPRs=2/3
+Status: OK
+Run: 20260714-220002
+Gates: build=True gh=True claude=True repoOnMain=True capped=True prDue=True open=2 stale=2 opened7d=0/3
+Stage R: no unaddressed feedback
 Stage 2: not run

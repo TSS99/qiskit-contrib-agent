@@ -30,11 +30,18 @@ Investigate (use real queries, look at real PRs):
 Then output the COMPLETE new contents of `merged-patterns.md`. Keep it tight,
 concrete, and grounded. It must cover, with real PR numbers as evidence:
 - The merge profile (size, file shape, title style, labels, release note norm).
-- Fertile areas where community/this-contributor fixes actually merge.
+- Fertile areas where community/this-contributor fixes actually merge. Note,
+  where evidence exists, which of those areas tend to be higher-impact bugs
+  (affect common/core usage) vs. lower-impact ones (rare edge cases, cosmetic
+  wording) — this feeds the Impact axis of the quality rubric in `prompt.md`.
 - Areas that consistently get closed (avoid list).
 - How specific maintainers reason, so the agent can pre-empt objections.
 - Proven recovery moves when a maintainer pushes back.
-- A one-line bottom line for issue selection.
+- A "Bottom line for issue selection" section that always preserves the
+  impact-first framing: selection must weigh real-world impact, not just
+  safety/narrowness, per the quality rubric in `prompt.md`. Do not let a
+  refresh regress this to "pick anything safe and narrow" — safety is a gate,
+  not the ranking criterion.
 
 Preserve the spirit of the current file (below) but update it with fresh evidence.
 Do not pad it. Do not add machine-like filler. Cite PR numbers.
