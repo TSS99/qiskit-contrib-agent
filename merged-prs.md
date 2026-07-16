@@ -18,4 +18,4 @@ submit it in the advocate Airtable form, change [ ] to [x] so you know it is alr
 | [ ] | #16309 | 2026-06-05 | Fix BitArray bitcount padding handling | https://github.com/Qiskit/qiskit/pull/16309 |
 | [ ] | #16530 | 2026-07-07 | Fix tautological boolean oracle synthesis | https://github.com/Qiskit/qiskit/pull/16530 |
 
-_Last updated: 2026-07-15_
+_Last updated: 2026-07-16_
