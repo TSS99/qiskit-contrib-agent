@@ -1,0 +1,6 @@
+﻿I now have enough signal to produce the lessons. The new feedback comes from PR 16080 (alexanderivrii + Cryoris on DraperQFTAdder docs fix) and PR 15945 (Cryoris on compose error messages).
+
+- [FEEDBACK]: Do not include CI or docs-deployment workflow file changes in a PR scoped to documentation content; alexanderivrii explicitly told TSS99 "you shouldn't change this file" and "or this file" about docs-deploy workflow files that had been inadvertently included in a docstring-only fix on PR 16080.
+- [FEEDBACK]: When adding or updating a circuit diagram in documentation, use the diagram actually produced by running the Qiskit code (e.g. `print(circuit.decompose())`) rather than a hand-drawn alternative; Cryoris objected on PR 16080 that the submitted diagram "does not reflect the implementation, and also doesn't match the labels of the circuit that's actually being produced."
+- [FEEDBACK]: When fixing error messages or behavior in one entry point, apply the same fix to all parallel implementations of the same operation across classes and languages; Cryoris asked on PR 15945 to extend the `QuantumCircuit.compose` error-message fix to `DAGCircuit.compose` and the Rust `py_compose` as well.
+
