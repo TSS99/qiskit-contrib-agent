@@ -1,0 +1,26 @@
+NO SUBMISSION RECOMMENDED
+
+Reason: the selected candidate, Qiskit/qiskit#15694, has an existing open competing PR: https://github.com/Qiskit/qiskit/pull/15718. That violates the no-competing-PR gate, even though the bug reproduced and the local patch validated.
+
+What was checked:
+- Read contribution policy, PR template, issue template, testing, release-note, and AI disclosure policy.
+- Refreshed `main` to `upstream/main`; final status is clean and `main...upstream/main` is `0 0`.
+- Screened 12+ issues across transpiler, primitives, circuit/control-flow, synthesis, and quantum-info/docs.
+- Shortlist:
+  - #15694: I=4 M=5 R=4 G=4 total=17/20, rejected after final duplicate-PR check.
+  - #16612: I=5 M=2 R=2 G=3 total=12/20, no maintainer confirmation and higher risk.
+  - #11849: I=4 M=4 R=2 G=3 total=13/20, likely too large/risky.
+
+What blocked submission:
+- Open competing PR #15718 already targets #15694.
+- No remaining candidate cleared the threshold after rejecting #15694.
+
+Cleanup:
+- I had created a local branch and commit for #15694 before the final duplicate check caught #15718.
+- I deleted that self-created branch and returned to `main`.
+- No branch or commit remains for Stage 2 to submit.
+
+What to learn:
+- Search direct issue numbers for open PRs before implementation, not only symbol/keyword queries.
+- A stale open PR still blocks a duplicate contribution unless maintainers clearly abandon it.
+- The no-competing-PR gate is more important than a validated patch.

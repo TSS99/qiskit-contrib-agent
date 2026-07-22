@@ -1,3 +1,5 @@
+﻿I have enough data. Let me synthesize everything into the updated file.
+
 # What Actually Gets Merged (grounded in real data)
 
 Derived from analysis of recently merged PRs in `Qiskit/qiskit` and
@@ -141,3 +143,4 @@ marginally simpler ΓÇö provided the higher-impact candidate clears every othe
 Do not chase Impact by taking on design debates, broad refactors, or anything the
 avoid-list already rules out. Docs-only fixes are not a NO ΓÇö a confirmed wrong
 fact in a docstring can land ΓÇö but they rank below correctness bugs.
+

@@ -10,7 +10,11 @@
                                            push, and post a short reply (gh+build).
       -  Weekly batch guard              - max 3 PRs opened per rolling 7 days;
                                            any >7-day-old open PR freezes new PRs
-                                           until merged or closed.
+                                           until merged or closed, unless it is
+                                           ghosted (>15 days, zero maintainer
+                                           reviews/comments) or abandoned
+                                           (maintainer silent >15 days), which
+                                           stop blocking.
       1. Pattern mining (sonnet + gh)    - refresh merged-patterns.md weekly.
       2. Stage 1 Codex prepare (xhigh)   - local branch + commit only.
       3. Stage 2 Opus verify + submit    - independent check, then push + PR.
@@ -55,6 +59,8 @@ $MineMaxAgeDays = 7
 $MaxPrsPerWeek   = 3   # hard cap on PRs OPENED in any rolling $BatchWindowDays-day window
 $BatchWindowDays = 7   # window size; an OPEN agent PR older than this freezes all new PRs
 $PrCadenceDays   = 1   # at most one agent PR attempt per day
+$StaleIgnoreDays = 15  # open + unmerged + never touched by a maintainer past this -> stops blocking
+$MaintainerSilenceDays = 15  # maintainer engaged but silent this long since -> stops blocking
 $AdvocateNumber = "126759"   # Qiskit Advocate # for the merged-PR points tracker
 $ContribGitHub  = "TSS99"    # GitHub handle whose merged Qiskit PRs are tracked
 
@@ -122,6 +128,19 @@ $ledger
     return $OpenPrBlock + $patternsBlock + $lessonsBlock + $ledgerBlock + $base
 }
 
+# Shared by the batch guard (ghosted-PR check) and Stage R (feedback detection).
+$isBot = { param($login) $login -match '(?i)\[bot\]$|coveralls|codecov|dependabot|github-actions|qiskit-bot' }
+# Newest non-bot, non-author review or comment on a PR - i.e. the last time a
+# maintainer engaged at all. Approvals count. [datetime]::MinValue = never touched.
+$lastMaintainerTouch = {
+    param($j)
+    $me = $j.author.login
+    $times = @()
+    foreach ($r in $j.reviews)  { if ($r.author.login -ne $me -and -not (& $isBot $r.author.login) -and $r.submittedAt) { $times += [datetime]$r.submittedAt } }
+    foreach ($c in $j.comments) { if ($c.author.login -ne $me -and -not (& $isBot $c.author.login) -and $c.createdAt)   { $times += [datetime]$c.createdAt } }
+    if ($times.Count) { ($times | Sort-Object | Select-Object -Last 1) } else { [datetime]::MinValue }
+}
+
 # --- PR cadence + weekly batch guard ------------------------------------------
 # Policy (user-set 2026-07-14, replaces the 3-concurrently-open ceiling): open at
 # most $MaxPrsPerWeek agent PRs in any rolling $BatchWindowDays-day window, at
@@ -131,6 +150,15 @@ $ledger
 # not count; only agent PRs in agent-prs.md. The correctness floor (reproducer
 # fails on main + tests pass) is enforced in the Stage 1 prompt - a night may
 # still be skipped if nothing clears it.
+#
+# Two escapes from that freeze (user-set 2026-07-22). Both leave the PR open and
+# untouched on GitHub - it just stops holding the agent back:
+#   ghosted   - open > $StaleIgnoreDays days and NO maintainer ever reviewed or
+#               commented. Nobody is coming; step over it.
+#   abandoned - a maintainer did engage, but their newest review/comment is more
+#               than $MaintainerSilenceDays days old. The conversation died.
+# A PR whose maintainer spoke recently keeps blocking however old it is - that is
+# a live conversation to finish, not a corpse to step over.
 $OpenPrBlock = ""
 $Capped    = $false   # batch limit / stale freeze / unsafe -> skip Stage 1/2
 $Escalate  = $false   # PR due and batch has room           -> push Stage 1 to land one
@@ -138,6 +166,8 @@ $WeeklyDue = $false
 $OpenCount = 0
 $OpenedInWindow = 0
 $StalePrs  = @()
+$GhostedPrs = @()     # open past $StaleIgnoreDays with zero maintainer engagement
+$AbandonedPrs = @()   # maintainer engaged once, then silent > $MaintainerSilenceDays
 
 # Fail-safe: a prior run that opened a PR but could not parse its URL drops this
 # flag so we hold. Clear it manually once you've confirmed PR state.
@@ -175,15 +205,34 @@ if (-not $Capped) {
         foreach ($u in $tracked.Keys) {
             $ageDays = ($now - $tracked[$u]).TotalDays
             if ($ageDays -lt $BatchWindowDays) { $OpenedInWindow++ }
-            $st = (gh pr view $u --json state 2>$null | ConvertFrom-Json).state
-            # Fail closed: undeterminable state (gh auth/network) counts as open.
+            $pv = $null
+            try { $pv = gh pr view $u --json state,author,reviews,comments 2>$null | ConvertFrom-Json } catch { $pv = $null }
+            $st = if ($pv) { $pv.state } else { $null }
+            # Fail closed: undeterminable state (gh auth/network) counts as open,
+            # and without review data we cannot call it ghosted - so it blocks.
             if (-not $st -or $st -eq "OPEN") {
                 $openUrls += $u
-                if ($ageDays -ge $BatchWindowDays) { $StalePrs += $u }
+                if ($ageDays -ge $BatchWindowDays) {
+                    # No review data (gh failed) -> cannot call it dead -> it blocks.
+                    $touch = if ($pv) { & $lastMaintainerTouch $pv } else { $now }
+                    if ($touch -eq [datetime]::MinValue) {
+                        if ($ageDays -ge $StaleIgnoreDays) { $GhostedPrs += $u } else { $StalePrs += $u }
+                    } elseif (($now - $touch).TotalDays -ge $MaintainerSilenceDays) {
+                        $AbandonedPrs += $u
+                    } else {
+                        $StalePrs += $u
+                    }
+                }
             }
         }
     }
     $OpenCount = $openUrls.Count
+    if ($GhostedPrs.Count) {
+        Write-Host "Ignoring $($GhostedPrs.Count) ghosted PR(s) (open >$StaleIgnoreDays days, no maintainer activity): $($GhostedPrs -join ', ')" -ForegroundColor Yellow
+    }
+    if ($AbandonedPrs.Count) {
+        Write-Host "Ignoring $($AbandonedPrs.Count) abandoned PR(s) (maintainer silent >$MaintainerSilenceDays days): $($AbandonedPrs -join ', ')" -ForegroundColor Yellow
+    }
     $WeeklyDue = (-not $lastPrDate) -or
                  ((New-TimeSpan -Start $lastPrDate -End $now).TotalDays -ge $PrCadenceDays)
 
@@ -382,7 +431,6 @@ $StageRResult = "not run"
 
 if ($GhOk -and $BuildOk -and $ClaudeOk -and (Test-Path $ReviseFile) -and (Test-Path $ReviseVerifyFile)) {
     Log "Stage R: checking open PRs for unaddressed reviewer feedback..." "Cyan"
-    $isBot = { param($login) $login -match '(?i)\[bot\]$|coveralls|codecov|dependabot|github-actions|qiskit-bot' }
     $reviseCandidates = @()
     $candidateFb = @{}
     # One honest attempt per feedback event. Comment-only feedback (a question, a
@@ -836,7 +884,7 @@ $HeartbeatText = @"
 
 Status: $(if ($Healthy) { "OK" } else { "FAILURE - check runs\$Timestamp" })
 Run: $Timestamp
-Gates: build=$BuildOk gh=$GhOk claude=$ClaudeOk repoOnMain=$RepoOnMain capped=$Capped prDue=$WeeklyDue open=$OpenCount stale=$($StalePrs.Count) opened${BatchWindowDays}d=$OpenedInWindow/$MaxPrsPerWeek
+Gates: build=$BuildOk gh=$GhOk claude=$ClaudeOk repoOnMain=$RepoOnMain capped=$Capped prDue=$WeeklyDue open=$OpenCount stale=$($StalePrs.Count) ghosted=$($GhostedPrs.Count) abandoned=$($AbandonedPrs.Count) opened${BatchWindowDays}d=$OpenedInWindow/$MaxPrsPerWeek
 Stage R: $StageRResult
 Stage 2: $Stage2Result
 "@

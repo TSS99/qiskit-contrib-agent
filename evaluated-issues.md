@@ -24,3 +24,7 @@
 - 2026-07-02 | https://github.com/Qiskit/qiskit/issues/16520 | reject | performance-oriented large reproducer unclear small fix
 - 2026-07-02 | https://github.com/Qiskit/qiskit/issues/16269 | reject | low priority per maintainer fuzzing-adjacent invalid-input panic
 
+- 2026-07-22 | https://github.com/Qiskit/qiskit/issues/15694 | reject | score=17/20 | competing PR #15718 already open
+- 2026-07-22 | https://github.com/Qiskit/qiskit/issues/16612 | reject | score=12/20 | no maintainer confirmation, higher risk
+- 2026-07-22 | https://github.com/Qiskit/qiskit/issues/11849 | reject | score=13/20 | too large or risky
+
