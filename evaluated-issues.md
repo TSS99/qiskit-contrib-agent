@@ -28,3 +28,7 @@
 - 2026-07-22 | https://github.com/Qiskit/qiskit/issues/16612 | reject | score=12/20 | no maintainer confirmation, higher risk
 - 2026-07-22 | https://github.com/Qiskit/qiskit/issues/11849 | reject | score=13/20 | too large or risky
 
+- 2026-07-23 | https://github.com/Qiskit/qiskit/issues/16430 | prepared | score=17/20 | StatePreparation inverse width fix submitted
+- 2026-07-23 | https://github.com/Qiskit/qiskit/issues/16160 | reject | score=11/20 | External-provider repro uncertainty
+- 2026-07-23 | https://github.com/Qiskit/qiskit/issues/16540 | reject | score=16/20 | Blocked: fixed crate not yet released
+

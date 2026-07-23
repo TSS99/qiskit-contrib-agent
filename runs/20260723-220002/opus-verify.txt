@@ -1,0 +1,35 @@
+﻿PR SUBMITTED
+
+**PR URL:** https://github.com/Qiskit/qiskit/pull/16650
+**Branch:** `fix-stateprep-inverse-width` (pushed to fork `origin` = TSS99/qiskit; upstream never touched)
+**Commit:** `4a738f71d Preserve StatePreparation inverse width`
+**Base:** `Qiskit/qiskit:main`
+
+**Files changed**
+- `qiskit/circuit/library/data_preparation/state_preparation.py` (4-line change in `inverse()`)
+- `test/python/circuit/library/test_state_preparation.py` (one regression test)
+- `releasenotes/notes/fix-stateprep-inverse-width-16430.yaml` (release note)
+
+**What I verified (real commands + results)**
+- **Issue still valid:** `gh issue view 16430` ΓÇö OPEN. Confirmed the merged #16492 fixed a *different* file (`initializer.py`, issue #16413), not `StatePreparation.inverse`.
+- **No competing active PR:** the only same-issue PR, #16431, is CLOSED ΓÇö and closed for a social reason (a maintainer asked that author to trim a large batch of LLM PRs), not on technical merit. Nothing open competes.
+- **Bug reproduced / fix confirmed:** `StatePreparation(1, num_qubits=2).inverse()` ΓåÆ now `inv.num_qubits == 2` (was 1). Confirmed the old path (`StatePreparation(1)` with no width) infers width 1, which is the root cause.
+- **Operator semantics (not just qubit count):** scratch script confirmed the int-bitmap gate + its inverse compose to the 4├ù4 identity; forward prepares `|01>`; double-inverse preserves width; value=5/width=4 round-trips to the 16├ù16 identity. Non-int paths (vector, label) are unaffected and still infer their own width.
+- **Tests:** `python -m unittest test.python.circuit.library.test_state_preparation -v` ΓåÆ 15 passed, including the new `test_inverse_preserves_integer_state_width`.
+- **Style/notes:** `black --check` (2 files unchanged), `ruff check` (all passed), `reno.main lint` on the note (clean).
+
+**What I fixed vs Stage 1:** Nothing in the code/test/note ΓÇö Stage 1's diff was correct, minimal, and passed independent verification, so no edits were needed. I rewrote the PR body to be shorter and human, and filled Qiskit's AI-disclosure section honestly (Codex/GPT-5 generated the code; description drafted with Codex and reviewed with Claude).
+
+**Known limitations:** Full Qiskit suite not run (only the touched module + style/note checks), consistent with the repo's targeted-test workflow.
+
+**Likely reviewer objections + answers**
+- *"Why only integer inputs?"* ΓÇö `num_qubits` is only accepted by the constructor for integer params; it raises for labels/vectors. Passing it unconditionally would break those paths.
+- *"Isn't this a duplicate of the closed #16431?"* ΓÇö Same fix idea, but #16431 was closed as part of an author's LLM-PR cleanup, not rejected on merit; the issue is still open and explicitly requests this fix. This is a single, tested, human-reviewed submission.
+- *"Another AI PR on this issue?"* ΓÇö Disclosed honestly; the change is a 4-line fix the issue itself suggested, independently verified here (operator-level, not just qubit-count).
+
+**Human explanation pack**
+- **Issue:** `StatePreparation(1, num_qubits=2).inverse()` wrongly became a 1-qubit gate.
+- **Root cause:** integer inputs store only the original integer; `inverse()` rebuilt from that integer without forwarding the explicit width, so the constructor re-inferred the minimum width (`int(log2(1))+1 = 1`).
+- **Fix:** for integer-backed instances only, pass `self.num_qubits` into the reconstructed `StatePreparation`.
+- **Test:** appends the gate and its inverse on a shared 2-qubit circuit and asserts the operator is the identity ΓÇö proving both width preservation and correct inverse behavior through public APIs.
+
